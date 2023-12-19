@@ -1,44 +1,28 @@
-add_library(audiocommon
+set(SRCS
   AudioCommon.cpp
-  AudioCommon.h
   AudioStretcher.cpp
-  AudioStretcher.h
   CubebStream.cpp
-  CubebStream.h
   CubebUtils.cpp
-  CubebUtils.h
-  Enums.h
+  DPL2Decoder.cpp
   Mixer.cpp
-  Mixer.h
-  SurroundDecoder.cpp
-  SurroundDecoder.h
-  NullSoundStream.cpp
-  NullSoundStream.h
   WaveFile.cpp
-  WaveFile.h
+  NullSoundStream.cpp
 )
 
-if(ANDROID)
-  find_package(OpenSLES)
-  if(OPENSLES_FOUND)
-    message(STATUS "OpenSLES found, enabling OpenSLES sound backend")
-    target_sources(audiocommon PRIVATE
-      OpenSLESStream.cpp
-      OpenSLESStream.h
-    )
-    target_link_libraries(audiocommon PRIVATE OpenSLES::OpenSLES)
-    target_compile_definitions(audiocommon PRIVATE HAVE_OPENSL_ES=1)
-  endif()
+add_dolphin_library(audiocommon "${SRCS}" "")
+
+find_package(OpenSLES)
+if(OPENSLES_FOUND)
+  message(STATUS "OpenSLES found, enabling OpenSLES sound backend")
+  target_sources(audiocommon PRIVATE OpenSLESStream.cpp)
+  target_link_libraries(audiocommon PRIVATE OpenSLES::OpenSLES)
 endif()
 
 if(ENABLE_ALSA)
   find_package(ALSA)
   if(ALSA_FOUND)
     message(STATUS "ALSA found, enabling ALSA sound backend")
-    target_sources(audiocommon PRIVATE
-      AlsaSoundStream.cpp
-      AlsaSoundStream.h
-    )
+    target_sources(audiocommon PRIVATE AlsaSoundStream.cpp)
     target_link_libraries(audiocommon PRIVATE ALSA::ALSA)
     target_compile_definitions(audiocommon PRIVATE HAVE_ALSA=1)
   else()
@@ -52,12 +36,9 @@ if(ENABLE_PULSEAUDIO)
   # PulseAudio ships with a PulseAudioConfig.cmake with no imported target
   # So we use our own FindPulseAudio instead with "MODULE"
   find_package(PulseAudio MODULE QUIET)
-  if(PulseAudio_FOUND)
+  if(PULSEAUDIO_FOUND)
     message(STATUS "PulseAudio found, enabling PulseAudio sound backend")
-    target_sources(audiocommon PRIVATE
-      PulseAudioStream.cpp
-      PulseAudioStream.h
-    )
+    target_sources(audiocommon PRIVATE PulseAudioStream.cpp)
     target_link_libraries(audiocommon PRIVATE PulseAudio::PulseAudio)
     target_compile_definitions(audiocommon PRIVATE HAVE_PULSEAUDIO=1)
   else()
@@ -68,26 +49,24 @@ else()
 endif()
 
 if(WIN32)
-  target_sources(audiocommon PRIVATE
-    # Dolphin loads openal32.dll at runtime
-    OpenALStream.cpp
-    OpenALStream.h
+  target_sources(audiocommon PRIVATE XAudio2Stream.cpp)
 
-    WASAPIStream.cpp
-    WASAPIStream.h
+  add_dolphin_library(audiocommon_xaudio27 "XAudio2_7Stream.cpp" "${LIBS}")
+  target_include_directories(audiocommon_xaudio27 PRIVATE
+    ${PROJECT_SOURCE_DIR}/Externals
+    ${PROJECT_SOURCE_DIR}/Externals/XAudio2_7
   )
+  target_link_libraries(audiocommon PRIVATE audiocommon_xaudio27)
+
+  set(ENV{OPENALDIR} ${PROJECT_SOURCE_DIR}/Externals/OpenAL)
+  find_package(OpenAL)
+  if(OPENAL_FOUND)
+    message(STATUS "OpenAL found, enabling OpenAL sound backend")
+    target_sources(audiocommon PRIVATE OpenALStream.cpp)
+    target_link_libraries(audiocommon PRIVATE OpenAL::OpenAL)
+  else()
+    message(FATAL_ERROR "OpenAL NOT found in Externals")
+  endif()
 endif()
 
-target_link_libraries(audiocommon
-PUBLIC
-  common
-
-PRIVATE
-  cubeb::cubeb
-  SoundTouch
-  FreeSurround)
-
-if(MSVC)
-  # Add precompiled header
-  target_link_libraries(audiocommon PRIVATE use_pch)
-endif()
+target_link_libraries(audiocommon PRIVATE cubeb SoundTouch)

@@ -1,11 +1,15 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include "Common/Network.h"
+#include "Common/CommonTypes.h"
 
-namespace IOS::Net
+namespace IOS
 {
-Common::MACAddress GetMACAddress();
-}  // namespace IOS::Net
+namespace Net
+{
+void GetMACAddress(u8* mac);
+}  // namespace Net
+}  // namespace IOS

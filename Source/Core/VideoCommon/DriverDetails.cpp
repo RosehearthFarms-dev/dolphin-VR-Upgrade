@@ -1,11 +1,11 @@
 // Copyright 2013 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "VideoCommon/DriverDetails.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <map>
 
 #include "Common/Logging/LogManager.h"
+#include "VideoCommon/DriverDetails.h"
 
 namespace DriverDetails
 {
@@ -24,21 +24,19 @@ struct BugInfo
 
 // Local members
 #ifdef _WIN32
-constexpr u32 m_os = OS_ALL | OS_WINDOWS;
+const u32 m_os = OS_ALL | OS_WINDOWS;
 #elif ANDROID
-constexpr u32 m_os = OS_ALL | OS_ANDROID;
+const u32 m_os = OS_ALL | OS_ANDROID;
 #elif __APPLE__
-constexpr u32 m_os = OS_ALL | OS_OSX;
+const u32 m_os = OS_ALL | OS_OSX;
 #elif __linux__
-constexpr u32 m_os = OS_ALL | OS_LINUX;
+const u32 m_os = OS_ALL | OS_LINUX;
 #elif __FreeBSD__
-constexpr u32 m_os = OS_ALL | OS_FREEBSD;
+const u32 m_os = OS_ALL | OS_FREEBSD;
 #elif __OpenBSD__
-constexpr u32 m_os = OS_ALL | OS_OPENBSD;
-#elif __NetBSD__
-constexpr u32 m_os = OS_ALL | OS_NETBSD;
+const u32 m_os = OS_ALL | OS_OPENBSD;
 #elif __HAIKU__
-constexpr u32 m_os = OS_ALL | OS_HAIKU;
+const u32 m_os = OS_ALL | OS_HAIKU;
 #endif
 
 static API m_api = API_OPENGL;
@@ -49,11 +47,13 @@ static double m_version = 0.0;
 
 // This is a list of all known bugs for each vendor
 // We use this to check if the device and driver has a issue
-constexpr BugInfo m_known_bugs[] = {
+static BugInfo m_known_bugs[] = {
     {API_OPENGL, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN,
      BUG_BROKEN_BUFFER_STREAM, -1.0, -1.0, true},
     {API_OPENGL, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN,
      BUG_BROKEN_NEGATED_BOOLEAN, -1.0, -1.0, true},
+    {API_OPENGL, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN,
+     BUG_BROKEN_EXPLICIT_FLUSH, -1.0, -1.0, true},
     {API_OPENGL, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_BROKEN_BUFFER_STREAM, -1.0,
      -1.0, true},
     {API_OPENGL, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_BROKEN_VSYNC, -1.0, -1.0,
@@ -82,27 +82,21 @@ constexpr BugInfo m_known_bugs[] = {
      BUG_BROKEN_UNSYNC_MAPPING, -1.0, -1.0, true},
     {API_OPENGL, OS_LINUX, VENDOR_NVIDIA, DRIVER_NVIDIA, Family::UNKNOWN, BUG_BROKEN_UNSYNC_MAPPING,
      -1.0, -1.0, true},
-    {API_OPENGL, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_BROKEN_UNSYNC_MAPPING, -1.0,
-     -1.0, true},
     {API_OPENGL, OS_WINDOWS, VENDOR_INTEL, DRIVER_INTEL, Family::UNKNOWN,
      BUG_INTEL_BROKEN_BUFFER_STORAGE, 101810.3907, 101810.3960, true},
     {API_OPENGL, OS_ALL, VENDOR_ATI, DRIVER_ATI, Family::UNKNOWN, BUG_SLOW_GETBUFFERSUBDATA, -1.0,
      -1.0, true},
     {API_OPENGL, OS_ALL, VENDOR_MESA, DRIVER_I965, Family::UNKNOWN, BUG_BROKEN_CLIP_DISTANCE, -1.0,
      -1.0, true},
+    {API_VULKAN, OS_ALL, VENDOR_ATI, DRIVER_ATI, Family::UNKNOWN,
+     BUG_BROKEN_FRAGMENT_SHADER_INDEX_DECORATION, -1.0, -1.0, true},
     {API_OPENGL, OS_WINDOWS, VENDOR_ATI, DRIVER_ATI, Family::UNKNOWN,
      BUG_BROKEN_DUAL_SOURCE_BLENDING, -1.0, -1.0, true},
     {API_OPENGL, OS_OSX, VENDOR_INTEL, DRIVER_INTEL, Family::UNKNOWN,
      BUG_BROKEN_DUAL_SOURCE_BLENDING, -1.0, -1.0, true},
-    {API_VULKAN, OS_OSX, VENDOR_INTEL, DRIVER_PORTABILITY, Family::UNKNOWN,
-     BUG_BROKEN_DUAL_SOURCE_BLENDING, -1.0, -1.0, true},
-    {API_METAL, OS_OSX, VENDOR_INTEL, DRIVER_APPLE, Family::UNKNOWN,
-     BUG_BROKEN_DUAL_SOURCE_BLENDING, -1.0, -1.0, true},
     {API_OPENGL, OS_ALL, VENDOR_IMGTEC, DRIVER_IMGTEC, Family::UNKNOWN,
      BUG_BROKEN_BITWISE_OP_NEGATION, -1.0, 108.4693462, true},
-    {API_VULKAN, OS_WINDOWS, VENDOR_ATI, DRIVER_ATI, Family::UNKNOWN, BUG_PRIMITIVE_RESTART, -1.0,
-     -1.0, true},
-    {API_VULKAN, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_PRIMITIVE_RESTART, -1.0, -1.0,
+    {API_VULKAN, OS_ALL, VENDOR_ATI, DRIVER_ATI, Family::UNKNOWN, BUG_PRIMITIVE_RESTART, -1.0, -1.0,
      true},
     {API_OPENGL, OS_LINUX, VENDOR_MESA, DRIVER_I965, Family::UNKNOWN,
      BUG_SHARED_CONTEXT_SHADER_COMPILATION, -1.0, -1.0, true},
@@ -112,50 +106,6 @@ constexpr BugInfo m_known_bugs[] = {
      -1.0, true},
     {API_VULKAN, OS_ALL, VENDOR_IMGTEC, DRIVER_IMGTEC, Family::UNKNOWN,
      BUG_BROKEN_CLEAR_LOADOP_RENDERPASS, -1.0, -1.0, true},
-    {API_VULKAN, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN, BUG_BROKEN_D32F_CLEAR,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_ALL, VENDOR_MESA, DRIVER_I965, Family::UNKNOWN, BUG_BROKEN_REVERSED_DEPTH_RANGE,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN,
-     BUG_BROKEN_REVERSED_DEPTH_RANGE, -1.0, -1.0, true},
-    {API_VULKAN, OS_OSX, VENDOR_ALL, DRIVER_PORTABILITY, Family::UNKNOWN,
-     BUG_BROKEN_REVERSED_DEPTH_RANGE, -1.0, -1.0, true},
-    {API_METAL, OS_OSX, VENDOR_ALL, DRIVER_APPLE, Family::UNKNOWN, BUG_BROKEN_REVERSED_DEPTH_RANGE,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_SLOW_CACHED_READBACK_MEMORY,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN,
-     BUG_SLOW_CACHED_READBACK_MEMORY, -1.0, -1.0, true},
-    {API_OPENGL, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_BROKEN_VECTOR_BITWISE_AND,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_ALL, VENDOR_ARM, DRIVER_ARM, Family::UNKNOWN, BUG_BROKEN_VECTOR_BITWISE_AND,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_OSX, VENDOR_ATI, DRIVER_PORTABILITY, Family::UNKNOWN, BUG_BROKEN_SUBGROUP_OPS,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_OSX, VENDOR_INTEL, DRIVER_PORTABILITY, Family::UNKNOWN, BUG_BROKEN_SUBGROUP_OPS,
-     -1.0, -1.0, true},
-    {API_METAL, OS_OSX, VENDOR_ATI, DRIVER_APPLE, Family::UNKNOWN, BUG_BROKEN_SUBGROUP_OPS, -1.0,
-     -1.0, true},
-    {API_METAL, OS_OSX, VENDOR_INTEL, DRIVER_APPLE, Family::UNKNOWN, BUG_BROKEN_SUBGROUP_OPS, -1.0,
-     -1.0, true},
-    {API_OPENGL, OS_ANDROID, VENDOR_ALL, DRIVER_ALL, Family::UNKNOWN,
-     BUG_BROKEN_MULTITHREADED_SHADER_PRECOMPILATION, -1.0, -1.0, true},
-    {API_VULKAN, OS_ANDROID, VENDOR_ALL, DRIVER_ALL, Family::UNKNOWN,
-     BUG_BROKEN_MULTITHREADED_SHADER_PRECOMPILATION, -1.0, -1.0, true},
-    {API_OPENGL, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN, BUG_PRIMITIVE_RESTART,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_ALL, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN, BUG_PRIMITIVE_RESTART,
-     -1.0, -1.0, true},
-    {API_VULKAN, OS_OSX, VENDOR_APPLE, DRIVER_PORTABILITY, Family::UNKNOWN,
-     BUG_BROKEN_DISCARD_WITH_EARLY_Z, -1.0, -1.0, true},
-    {API_METAL, OS_OSX, VENDOR_APPLE, DRIVER_APPLE, Family::UNKNOWN,
-     BUG_BROKEN_DISCARD_WITH_EARLY_Z, -1.0, -1.0, true},
-    {API_VULKAN, OS_OSX, VENDOR_INTEL, DRIVER_PORTABILITY, Family::UNKNOWN,
-     BUG_BROKEN_DYNAMIC_SAMPLER_INDEXING, -1.0, -1.0, true},
-    {API_METAL, OS_OSX, VENDOR_INTEL, DRIVER_APPLE, Family::UNKNOWN,
-     BUG_BROKEN_DYNAMIC_SAMPLER_INDEXING, -1.0, -1.0, true},
-    {API_VULKAN, OS_ANDROID, VENDOR_QUALCOMM, DRIVER_QUALCOMM, Family::UNKNOWN,
-     BUG_SLOW_OPTIMAL_IMAGE_TO_BUFFER_COPY, -1.0, -1.0, true},
 };
 
 static std::map<Bug, BugInfo> m_bugs;
@@ -196,7 +146,7 @@ void Init(API api, Vendor vendor, Driver driver, const double version, const Fam
   // Clear bug list, as the API may have changed
   m_bugs.clear();
 
-  for (const auto& bug : m_known_bugs)
+  for (auto& bug : m_known_bugs)
   {
     if ((bug.m_api & api) && (bug.m_os & m_os) &&
         (bug.m_vendor == m_vendor || bug.m_vendor == VENDOR_ALL) &&
@@ -204,17 +154,45 @@ void Init(API api, Vendor vendor, Driver driver, const double version, const Fam
         (bug.m_family == m_family || bug.m_family == Family::UNKNOWN) &&
         (bug.m_versionstart <= m_version || bug.m_versionstart == -1) &&
         (bug.m_versionend > m_version || bug.m_versionend == -1))
-    {
       m_bugs.emplace(bug.m_bug, bug);
-    }
   }
 }
 
 bool HasBug(Bug bug)
 {
-  const auto it = m_bugs.find(bug);
+  auto it = m_bugs.find(bug);
   if (it == m_bugs.end())
     return false;
   return it->second.m_hasbug;
 }
-}  // namespace DriverDetails
+
+Vendor TranslatePCIVendorID(u32 vendor_id)
+{
+  switch (vendor_id)
+  {
+  case 0x10DE:
+    return VENDOR_NVIDIA;
+
+  case 0x1002:
+  case 0x1022:
+    return VENDOR_ATI;
+
+  case 0x8086:
+  case 0x8087:
+    return VENDOR_INTEL;
+
+  // TODO: Is this correct for Mali?
+  case 0x13B6:
+    return VENDOR_ARM;
+
+  case 0x5143:
+    return VENDOR_QUALCOMM;
+
+  case 0x1010:
+    return VENDOR_IMGTEC;
+
+  default:
+    return VENDOR_UNKNOWN;
+  }
+}
+}

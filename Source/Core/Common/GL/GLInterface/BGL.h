@@ -1,35 +1,27 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include "Common/GL/GLContext.h"
+#include "Common/GL/GLInterfaceBase.h"
 
 class BWindow;
 class BGLView;
 
-class GLContextBGL final : public GLContext
+class cInterfaceBGL final : public cInterfaceBase
 {
 public:
-  ~GLContextBGL() override;
-
-  bool IsHeadless() const override;
-
+  void Swap() override;
+  void* GetFuncAddress(const std::string& name) override;
+  bool Create(void* window_handle, bool stereo, bool core) override;
   bool MakeCurrent() override;
   bool ClearCurrent() override;
-
+  void Shutdown() override;
   void Update() override;
-
-  void Swap() override;
-
-  void* GetFuncAddress(const std::string& name) override;
-
-protected:
-  bool Initialize(const WindowSystemInfo& wsi, bool stereo, bool core) override;
+  void SwapInterval(int interval) override;
 
 private:
-  static BGLView* s_current;
-
   BWindow* m_window;
   BGLView* m_gl;
 };

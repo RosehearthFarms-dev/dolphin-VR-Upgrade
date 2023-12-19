@@ -1,25 +1,20 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/HW/EXI/EXI_DeviceEthernet.h"
 
-#include <algorithm>
 #include <memory>
-#include <optional>
 #include <string>
 
-#include "Common/BitUtils.h"
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
 #include "Common/Network.h"
-#include "Common/StringUtil.h"
-#include "Core/Config/MainSettings.h"
+#include "Core/ConfigManager.h"
 #include "Core/CoreTiming.h"
 #include "Core/HW/EXI/EXI.h"
 #include "Core/HW/Memmap.h"
-#include "Core/PowerPC/PowerPC.h"
-#include "Core/System.h"
 
 namespace ExpansionInterface
 {
@@ -27,81 +22,46 @@ namespace ExpansionInterface
 // Multiple parts of this implementation depend on Dolphin
 // being compiled for a little endian host.
 
-CEXIETHERNET::CEXIETHERNET(Core::System& system, BBADeviceType type) : IEXIDevice(system)
+CEXIETHERNET::CEXIETHERNET()
 {
-  // Parse MAC address from config, and generate a new one if it doesn't
-  // exist or can't be parsed.
-  std::string mac_addr_setting = Config::Get(Config::MAIN_BBA_MAC);
-  std::optional<Common::MACAddress> mac_addr = Common::StringToMacAddress(mac_addr_setting);
-
-  Common::ToLower(&mac_addr_setting);
-
-  if (!mac_addr)
-  {
-    mac_addr = Common::GenerateMacAddress(Common::MACConsumer::BBA);
-    mac_addr_setting = Common::MacAddressToString(mac_addr.value());
-    Config::SetBaseOrCurrent(Config::MAIN_BBA_MAC, mac_addr_setting);
-    Config::Save();
-  }
-
-  switch (type)
-  {
-  case BBADeviceType::TAP:
-    m_network_interface = std::make_unique<TAPNetworkInterface>(this);
-    INFO_LOG_FMT(SP1, "Created TAP physical network interface.");
-    break;
-#if defined(__APPLE__)
-  case BBADeviceType::TAPSERVER:
-    m_network_interface = std::make_unique<TAPServerNetworkInterface>(this);
-    INFO_LOG_FMT(SP1, "Created tapserver physical network interface.");
-    break;
-#endif
-  case BBADeviceType::BuiltIn:
-    m_network_interface = std::make_unique<BuiltInBBAInterface>(
-        this, Config::Get(Config::MAIN_BBA_BUILTIN_DNS), Config::Get(Config::MAIN_BBA_BUILTIN_IP));
-    INFO_LOG_FMT(SP1, "Created Built in network interface.");
-    break;
-  case BBADeviceType::XLINK:
-    // TODO start BBA with network link down, bring it up after "connected" response from XLink
-
-    // Perform sanity check on BBA MAC address, XLink requires the vendor OUI to be Nintendo's and
-    // to be one of the two used for the GameCube.
-    // Don't actually stop the BBA from initializing though
-    if (!mac_addr_setting.starts_with("00:09:bf") && !mac_addr_setting.starts_with("00:17:ab"))
-    {
-      PanicAlertFmtT(
-          "BBA MAC address {0} invalid for XLink Kai. A valid Nintendo GameCube MAC address "
-          "must be used. Generate a new MAC address starting with 00:09:bf or 00:17:ab.",
-          mac_addr_setting);
-    }
-
-    // m_client_mdentifier should be unique per connected emulator from the XLink kai client's
-    // perspective so lets use "dolphin<bba mac>"
-    m_network_interface =
-        std::make_unique<XLinkNetworkInterface>(this, Config::Get(Config::MAIN_BBA_XLINK_IP), 34523,
-                                                "dolphin" + Config::Get(Config::MAIN_BBA_MAC),
-                                                Config::Get(Config::MAIN_BBA_XLINK_CHAT_OSD));
-    INFO_LOG_FMT(SP1, "Created XLink Kai BBA network interface connection to {}:34523",
-                 Config::Get(Config::MAIN_BBA_XLINK_IP));
-    break;
-  }
-
   tx_fifo = std::make_unique<u8[]>(BBA_TXFIFO_SIZE);
   mBbaMem = std::make_unique<u8[]>(BBA_MEM_SIZE);
+
   mRecvBuffer = std::make_unique<u8[]>(BBA_RECV_SIZE);
+  mRecvBufferLength = 0;
 
   MXHardReset();
 
-  const auto& mac = mac_addr.value();
-  memcpy(&mBbaMem[BBA_NAFR_PAR0], mac.data(), mac.size());
+  // Parse MAC address from config, and generate a new one if it doesn't
+  // exist or can't be parsed.
+  std::string& mac_addr_setting = SConfig::GetInstance().m_bba_mac;
+  u8 mac_addr[Common::MAC_ADDRESS_SIZE] = {0};
+
+  if (!Common::StringToMacAddress(mac_addr_setting, mac_addr))
+  {
+    Common::GenerateMacAddress(Common::MACConsumer::BBA, mac_addr);
+    mac_addr_setting = Common::MacAddressToString(mac_addr);
+    SConfig::GetInstance().SaveSettings();
+  }
+
+  memcpy(&mBbaMem[BBA_NAFR_PAR0], mac_addr, Common::MAC_ADDRESS_SIZE);
 
   // HACK: .. fully established 100BASE-T link
   mBbaMem[BBA_NWAYS] = NWAYS_LS100 | NWAYS_LPNWAY | NWAYS_100TXF | NWAYS_ANCLPT;
+
+#if defined(_WIN32)
+  mHAdapter = INVALID_HANDLE_VALUE;
+  memset(&mReadOverlapped, 0, sizeof(mReadOverlapped));
+  memset(&mWriteOverlapped, 0, sizeof(mWriteOverlapped));
+  mWritePending = false;
+#elif defined(__linux__) || defined(__APPLE__)
+  fd = -1;
+#endif
 }
 
 CEXIETHERNET::~CEXIETHERNET()
 {
-  m_network_interface->Deactivate();
+  Deactivate();
 }
 
 void CEXIETHERNET::SetCS(int cs)
@@ -137,15 +97,14 @@ void CEXIETHERNET::ImmWrite(u32 data, u32 size)
       transfer.address = (data >> 8) & 0xffff;
     transfer.direction = IsWriteCommand(data) ? transfer.WRITE : transfer.READ;
 
-    DEBUG_LOG_FMT(SP1, "{} {} {} {:x}", IsMXCommand(data) ? "mx " : "exi",
-                  IsWriteCommand(data) ? "write" : "read ", GetRegisterName(), transfer.address);
+    DEBUG_LOG(SP1, "%s %s %s %x", IsMXCommand(data) ? "mx " : "exi",
+              IsWriteCommand(data) ? "write" : "read ", GetRegisterName(), transfer.address);
 
     if (transfer.address == BBA_IOB && transfer.region == transfer.MX)
     {
-      ERROR_LOG_FMT(SP1,
-                    "Usage of BBA_IOB indicates that the rx packet descriptor has been corrupted. "
-                    "Killing Dolphin...");
-      std::exit(0);
+      ERROR_LOG(SP1, "Usage of BBA_IOB indicates that the rx packet descriptor has been corrupted. "
+                     "Killing Dolphin...");
+      exit(0);
     }
 
     // transfer has been setup
@@ -154,7 +113,7 @@ void CEXIETHERNET::ImmWrite(u32 data, u32 size)
 
   // Reach here if we're actually writing data to the EXI or MX region.
 
-  DEBUG_LOG_FMT(SP1, "{} write {:x}", transfer.region == transfer.MX ? "mx " : "exi", data);
+  DEBUG_LOG(SP1, "%s write %0*x", transfer.region == transfer.MX ? "mx " : "exi", size * 2, data);
 
   if (transfer.region == transfer.EXI)
   {
@@ -162,23 +121,12 @@ void CEXIETHERNET::ImmWrite(u32 data, u32 size)
     {
     case INTERRUPT:
       exi_status.interrupt &= data ^ 0xff;
-      // raise back if there is still data
-      if (page_ptr(BBA_RRP) != page_ptr(BBA_RWP))
-      {
-        if (mBbaMem[BBA_IMR] & INT_R)
-        {
-          mBbaMem[BBA_IR] |= INT_R;
-
-          exi_status.interrupt |= exi_status.TRANSFER;
-        }
-      }
-
       break;
     case INTERRUPT_MASK:
       exi_status.interrupt_mask = data;
       break;
     }
-    m_system.GetExpansionInterface().UpdateInterrupts();
+    ExpansionInterface::UpdateInterrupts();
   }
   else
   {
@@ -219,7 +167,7 @@ u32 CEXIETHERNET::ImmRead(u32 size)
       ret |= mBbaMem[transfer.address++] << (i * 8);
   }
 
-  DEBUG_LOG_FMT(SP1, "imm r{}: {:x}", size, ret);
+  DEBUG_LOG(SP1, "imm r%i: %0*x", size, size * 2, ret);
 
   ret <<= (4 - size) * 8;
 
@@ -228,27 +176,27 @@ u32 CEXIETHERNET::ImmRead(u32 size)
 
 void CEXIETHERNET::DMAWrite(u32 addr, u32 size)
 {
-  DEBUG_LOG_FMT(SP1, "DMA write: {:08x} {:x}", addr, size);
+  DEBUG_LOG(SP1, "DMA write: %08x %x", addr, size);
 
   if (transfer.region == transfer.MX && transfer.direction == transfer.WRITE &&
       transfer.address == BBA_WRTXFIFOD)
   {
-    auto& memory = m_system.GetMemory();
-    DirectFIFOWrite(memory.GetPointer(addr), size);
+    DirectFIFOWrite(Memory::GetPointer(addr), size);
   }
   else
   {
-    ERROR_LOG_FMT(SP1, "DMA write in {} {} mode - not implemented",
-                  transfer.region == transfer.EXI ? "exi" : "mx",
-                  transfer.direction == transfer.READ ? "read" : "write");
+    ERROR_LOG(SP1, "DMA write in %s %s mode - not implemented",
+              transfer.region == transfer.EXI ? "exi" : "mx",
+              transfer.direction == transfer.READ ? "read" : "write");
   }
 }
 
 void CEXIETHERNET::DMARead(u32 addr, u32 size)
 {
-  DEBUG_LOG_FMT(SP1, "DMA read: {:08x} {:x}", addr, size);
-  auto& memory = m_system.GetMemory();
-  memory.CopyToEmu(addr, &mBbaMem[transfer.address], size);
+  DEBUG_LOG(SP1, "DMA read: %08x %x", addr, size);
+
+  Memory::CopyToEmu(addr, &mBbaMem[transfer.address], size);
+
   transfer.address += size;
 }
 
@@ -360,35 +308,36 @@ void CEXIETHERNET::MXCommandHandler(u32 data, u32 size)
   switch (transfer.address)
   {
   case BBA_NCRA:
-    if ((data & NCRA_RESET) != 0)
+    if (data & NCRA_RESET)
     {
-      INFO_LOG_FMT(SP1, "Software reset");
+      INFO_LOG(SP1, "Software reset");
       // MXSoftReset();
-      m_network_interface->Activate();
+      Activate();
     }
-    if (((mBbaMem[BBA_NCRA] & NCRA_SR) ^ (data & NCRA_SR)) != 0)
-    {
-      DEBUG_LOG_FMT(SP1, "{} rx", (data & NCRA_SR) ? "start" : "stop");
 
-      if ((data & NCRA_SR) != 0)
-        m_network_interface->RecvStart();
+    if ((mBbaMem[BBA_NCRA] & NCRA_SR) ^ (data & NCRA_SR))
+    {
+      DEBUG_LOG(SP1, "%s rx", (data & NCRA_SR) ? "start" : "stop");
+
+      if (data & NCRA_SR)
+        RecvStart();
       else
-        m_network_interface->RecvStop();
+        RecvStop();
     }
 
     // Only start transfer if there isn't one currently running
-    if ((mBbaMem[BBA_NCRA] & (NCRA_ST0 | NCRA_ST1)) == 0)
+    if (!(mBbaMem[BBA_NCRA] & (NCRA_ST0 | NCRA_ST1)))
     {
       // Technically transfer DMA status is kept in TXDMA - not implemented
 
-      if ((data & NCRA_ST0) != 0)
+      if (data & NCRA_ST0)
       {
-        INFO_LOG_FMT(SP1, "start tx - local DMA");
+        INFO_LOG(SP1, "start tx - local DMA");
         SendFromPacketBuffer();
       }
-      else if ((data & NCRA_ST1) != 0)
+      else if (data & NCRA_ST1)
       {
-        DEBUG_LOG_FMT(SP1, "start tx - direct FIFO");
+        DEBUG_LOG(SP1, "start tx - direct FIFO");
         SendFromDirectFIFO();
         // Kind of a hack: send completes instantly, so we don't
         // actually write the "send in status" bit to the register
@@ -432,6 +381,7 @@ void CEXIETHERNET::DirectFIFOWrite(const u8* data, u32 size)
 {
   // In direct mode, the hardware handles creating the state required by the
   // GMAC instead of finagling with packet descriptors and such
+
   u16* tx_fifo_count = (u16*)&mBbaMem[BBA_TXFIFOCNT];
 
   memcpy(tx_fifo.get() + *tx_fifo_count, data, size);
@@ -445,15 +395,12 @@ void CEXIETHERNET::DirectFIFOWrite(const u8* data, u32 size)
 
 void CEXIETHERNET::SendFromDirectFIFO()
 {
-  const u8* frame = tx_fifo.get();
-  const u16 size = Common::BitCastPtr<u16>(&mBbaMem[BBA_TXFIFOCNT]);
-  if (m_network_interface->SendFrame(frame, size))
-    m_system.GetPowerPC().GetDebugInterface().NetworkLogger()->LogBBA(frame, size);
+  SendFrame(tx_fifo.get(), *(u16*)&mBbaMem[BBA_TXFIFOCNT]);
 }
 
 void CEXIETHERNET::SendFromPacketBuffer()
 {
-  ERROR_LOG_FMT(SP1, "tx packet buffer not implemented.");
+  ERROR_LOG(SP1, "tx packet buffer not implemented.");
 }
 
 void CEXIETHERNET::SendComplete()
@@ -466,7 +413,7 @@ void CEXIETHERNET::SendComplete()
     mBbaMem[BBA_IR] |= INT_T;
 
     exi_status.interrupt |= exi_status.TRANSFER;
-    m_system.GetExpansionInterface().ScheduleUpdateInterrupts(CoreTiming::FromThread::CPU, 0);
+    ExpansionInterface::ScheduleUpdateInterrupts(CoreTiming::FromThread::CPU, 0);
   }
 
   mBbaMem[BBA_LTPS] = 0;
@@ -529,16 +476,10 @@ inline void CEXIETHERNET::inc_rwp()
 {
   u16* rwp = (u16*)&mBbaMem[BBA_RWP];
 
-  if (*rwp == page_ptr(BBA_RHBP))
+  if (*rwp + 1 == page_ptr(BBA_RHBP))
     *rwp = page_ptr(BBA_BP);
   else
     (*rwp)++;
-}
-
-inline void CEXIETHERNET::set_rwp(u16 value)
-{
-  u16* rwp = (u16*)&mBbaMem[BBA_RWP];
-  *rwp = value;
 }
 
 // This function is on the critical path for receiving data.
@@ -546,109 +487,108 @@ inline void CEXIETHERNET::set_rwp(u16 value)
 bool CEXIETHERNET::RecvHandlePacket()
 {
   u8* write_ptr;
+  u8* end_ptr;
+  u8* read_ptr;
   Descriptor* descriptor;
   u32 status = 0;
   u16 rwp_initial = page_ptr(BBA_RWP);
-  u16 current_rwp = 0;
-  u32 off = 4;
+
   if (!RecvMACFilter())
     goto wait_for_next;
 
 #ifdef BBA_TRACK_PAGE_PTRS
-  INFO_LOG_FMT(SP1, "RecvHandlePacket {:x}\n{}", mRecvBufferLength,
-               ArrayToString(mRecvBuffer.get(), mRecvBufferLength, 16));
+  INFO_LOG(SP1, "RecvHandlePacket %x\n%s", mRecvBufferLength,
+           ArrayToString(mRecvBuffer, mRecvBufferLength, 0x100).c_str());
 
-  INFO_LOG_FMT(SP1, "{:x} {:x} {:x} {:x}", page_ptr(BBA_BP), page_ptr(BBA_RRP), page_ptr(BBA_RWP),
-               page_ptr(BBA_RHBP));
+  INFO_LOG(SP1, "%x %x %x %x", page_ptr(BBA_BP), page_ptr(BBA_RRP), page_ptr(BBA_RWP),
+           page_ptr(BBA_RHBP));
 #endif
-  m_system.GetPowerPC().GetDebugInterface().NetworkLogger()->LogBBA(mRecvBuffer.get(),
-                                                                    mRecvBufferLength);
-  write_ptr = &mBbaMem[page_ptr(BBA_RWP) << 8];
+
+  write_ptr = ptr_from_page_ptr(BBA_RWP);
+  end_ptr = ptr_from_page_ptr(BBA_RHBP);
+  read_ptr = ptr_from_page_ptr(BBA_RRP);
 
   descriptor = (Descriptor*)write_ptr;
-  current_rwp = page_ptr(BBA_RWP);
-  DEBUG_LOG_FMT(SP1, "Frame recv: {:x}", mRecvBufferLength);
-  for (u32 i = 0; i < mRecvBufferLength; i++)
+  write_ptr += 4;
+
+  for (u32 i = 0, off = 4; i < mRecvBufferLength; ++i, ++off)
   {
-    write_ptr[off] = mRecvBuffer[i];
-    off++;
-    if (off == 0x100)
+    *write_ptr++ = mRecvBuffer[i];
+
+    if (off == 0xff)
     {
       off = 0;
-      // avoid increasing the BBA register while copying
-      // sometime the OS can try to process when it's not completed
-      current_rwp = current_rwp == page_ptr(BBA_RHBP) ? page_ptr(BBA_BP) : current_rwp + 1;
+      inc_rwp();
+    }
 
-      write_ptr = &mBbaMem[current_rwp << 8];
+    if (write_ptr == end_ptr)
+      write_ptr = ptr_from_page_ptr(BBA_BP);
 
-      if (page_ptr(BBA_RRP) == current_rwp)
-      {
-        /*
-        halt copy
-        if (cur_packet_size >= PAGE_SIZE)
-          desc.status |= FO | BF
-        if (RBFIM)
-          raise RBFI
-        if (AUTORCVR)
-          discard bad packet
-        else
-          inc MPC instead of receiving packets
-        */
-        status |= DESC_FO | DESC_BF;
-        mBbaMem[BBA_IR] |= mBbaMem[BBA_IMR] & INT_RBF;
-        break;
-      }
+    if (write_ptr == read_ptr)
+    {
+      /*
+      halt copy
+      if (cur_packet_size >= PAGE_SIZE)
+        desc.status |= FO | BF
+      if (RBFIM)
+        raise RBFI
+      if (AUTORCVR)
+        discard bad packet
+      else
+        inc MPC instead of receiving packets
+      */
+      status |= DESC_FO | DESC_BF;
+      mBbaMem[BBA_IR] |= mBbaMem[BBA_IMR] & INT_RBF;
+      break;
     }
   }
 
   // Align up to next page
   if ((mRecvBufferLength + 4) % 256)
-    current_rwp = current_rwp == page_ptr(BBA_RHBP) ? page_ptr(BBA_BP) : current_rwp + 1;
+    inc_rwp();
 
 #ifdef BBA_TRACK_PAGE_PTRS
-  INFO_LOG_FMT(SP1, "{:x} {:x} {:x} {:x}", page_ptr(BBA_BP), page_ptr(BBA_RRP), page_ptr(BBA_RWP),
-               page_ptr(BBA_RHBP));
+  INFO_LOG(SP1, "%x %x %x %x", page_ptr(BBA_BP), page_ptr(BBA_RRP), page_ptr(BBA_RWP),
+           page_ptr(BBA_RHBP));
 #endif
 
   // Is the current frame multicast?
-  if ((mRecvBuffer[0] & 1) != 0)
+  if (mRecvBuffer[0] & 0x01)
     status |= DESC_MF;
 
-  if ((status & DESC_BF) != 0)
+  if (status & DESC_BF)
   {
-    if ((mBbaMem[BBA_MISC2] & MISC2_AUTORCVR) != 0)
+    if (mBbaMem[BBA_MISC2] & MISC2_AUTORCVR)
     {
       *(u16*)&mBbaMem[BBA_RWP] = rwp_initial;
     }
     else
     {
-      ERROR_LOG_FMT(SP1, "RBF while AUTORCVR == 0!");
+      ERROR_LOG(SP1, "RBF while AUTORCVR == 0!");
     }
   }
 
-  descriptor->set(current_rwp, 4 + mRecvBufferLength, status);
-
-  set_rwp(current_rwp);
+  descriptor->set(*(u16*)&mBbaMem[BBA_RWP], 4 + mRecvBufferLength, status);
 
   mBbaMem[BBA_LRPS] = status;
 
   // Raise interrupt
-  if ((mBbaMem[BBA_IMR] & INT_R) != 0)
+  if (mBbaMem[BBA_IMR] & INT_R)
   {
     mBbaMem[BBA_IR] |= INT_R;
 
     exi_status.interrupt |= exi_status.TRANSFER;
-    m_system.GetExpansionInterface().ScheduleUpdateInterrupts(CoreTiming::FromThread::NON_CPU, 0);
+    ExpansionInterface::ScheduleUpdateInterrupts(CoreTiming::FromThread::NON_CPU, 0);
   }
   else
   {
     // This occurs if software is still processing the last raised recv interrupt
-    WARN_LOG_FMT(SP1, "NOT raising recv interrupt");
+    WARN_LOG(SP1, "NOT raising recv interrupt");
   }
 
 wait_for_next:
-  if ((mBbaMem[BBA_NCRA] & NCRA_SR) != 0)
-    m_network_interface->RecvStart();
+  if (mBbaMem[BBA_NCRA] & NCRA_SR)
+    RecvStart();
 
   return true;
 }

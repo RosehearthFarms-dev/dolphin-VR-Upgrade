@@ -1,36 +1,36 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/IOS/USB/Common.h"
 
 #include <algorithm>
 
-#include <fmt/format.h>
-
+#include "Common/Align.h"
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
+#include "Common/StringUtil.h"
 #include "Common/Swap.h"
 #include "Core/HW/Memmap.h"
-#include "Core/System.h"
 
-namespace IOS::HLE::USB
+namespace IOS
+{
+namespace HLE
+{
+namespace USB
 {
 std::unique_ptr<u8[]> TransferCommand::MakeBuffer(const size_t size) const
 {
-  ASSERT_MSG(IOS_USB, data_address != 0, "Invalid data_address");
+  _assert_msg_(IOS_USB, data_address != 0, "Invalid data_address");
   auto buffer = std::make_unique<u8[]>(size);
-  auto& system = m_ios.GetSystem();
-  auto& memory = system.GetMemory();
-  memory.CopyFromEmu(buffer.get(), data_address, size);
+  Memory::CopyFromEmu(buffer.get(), data_address, size);
   return buffer;
 }
 
 void TransferCommand::FillBuffer(const u8* src, const size_t size) const
 {
-  ASSERT_MSG(IOS_USB, size == 0 || data_address != 0, "Invalid data_address");
-  auto& system = m_ios.GetSystem();
-  auto& memory = system.GetMemory();
-  memory.CopyToEmu(data_address, src, size);
+  _assert_msg_(IOS_USB, size == 0 || data_address != 0, "Invalid data_address");
+  Memory::CopyToEmu(data_address, src, size);
 }
 
 void TransferCommand::OnTransferComplete(s32 return_value) const
@@ -38,18 +38,9 @@ void TransferCommand::OnTransferComplete(s32 return_value) const
   m_ios.EnqueueIPCReply(ios_request, return_value, 0, CoreTiming::FromThread::NON_CPU);
 }
 
-void TransferCommand::ScheduleTransferCompletion(s32 return_value, u32 expected_time_us) const
-{
-  auto ticks = SystemTimers::GetTicksPerSecond();
-  s64 cycles_in_future = static_cast<s64>((static_cast<u64>(ticks) * expected_time_us) / 1'000'000);
-  m_ios.EnqueueIPCReply(ios_request, return_value, cycles_in_future, CoreTiming::FromThread::ANY);
-}
-
 void IsoMessage::SetPacketReturnValue(const size_t packet_num, const u16 return_value) const
 {
-  auto& system = m_ios.GetSystem();
-  auto& memory = system.GetMemory();
-  memory.Write_U16(return_value, static_cast<u32>(packet_sizes_addr + packet_num * sizeof(u16)));
+  Memory::Write_U16(return_value, static_cast<u32>(packet_sizes_addr + packet_num * sizeof(u16)));
 }
 
 Device::~Device() = default;
@@ -79,30 +70,88 @@ bool Device::HasClass(const u8 device_class) const
   });
 }
 
-void DeviceDescriptor::Swap()
+static void CopyToBufferAligned(std::vector<u8>* buffer, const void* data, const size_t size)
 {
-  bcdUSB = Common::swap16(bcdUSB);
-  idVendor = Common::swap16(idVendor);
-  idProduct = Common::swap16(idProduct);
-  bcdDevice = Common::swap16(bcdDevice);
+  buffer->insert(buffer->end(), static_cast<const u8*>(data), static_cast<const u8*>(data) + size);
+  const size_t number_of_padding_bytes = Common::AlignUp(size, 4) - size;
+  buffer->insert(buffer->end(), number_of_padding_bytes, 0);
 }
 
-void ConfigDescriptor::Swap()
+static void CopyDescriptorToBuffer(std::vector<u8>* buffer, DeviceDescriptor descriptor)
 {
-  wTotalLength = Common::swap16(wTotalLength);
+  descriptor.bcdUSB = Common::swap16(descriptor.bcdUSB);
+  descriptor.idVendor = Common::swap16(descriptor.idVendor);
+  descriptor.idProduct = Common::swap16(descriptor.idProduct);
+  descriptor.bcdDevice = Common::swap16(descriptor.bcdDevice);
+  CopyToBufferAligned(buffer, &descriptor, descriptor.bLength);
 }
 
-void InterfaceDescriptor::Swap()
+static void CopyDescriptorToBuffer(std::vector<u8>* buffer, ConfigDescriptor descriptor)
 {
+  descriptor.wTotalLength = Common::swap16(descriptor.wTotalLength);
+  CopyToBufferAligned(buffer, &descriptor, descriptor.bLength);
 }
 
-void EndpointDescriptor::Swap()
+static void CopyDescriptorToBuffer(std::vector<u8>* buffer, InterfaceDescriptor descriptor)
 {
-  wMaxPacketSize = Common::swap16(wMaxPacketSize);
+  CopyToBufferAligned(buffer, &descriptor, descriptor.bLength);
+}
+
+static void CopyDescriptorToBuffer(std::vector<u8>* buffer, EndpointDescriptor descriptor)
+{
+  descriptor.wMaxPacketSize = Common::swap16(descriptor.wMaxPacketSize);
+  // IOS only copies 8 bytes from the endpoint descriptor, regardless of the actual length
+  CopyToBufferAligned(buffer, &descriptor, sizeof(descriptor));
+}
+
+std::vector<u8> Device::GetDescriptorsUSBV4() const
+{
+  return GetDescriptors([](const auto& descriptor) { return true; });
+}
+
+std::vector<u8> Device::GetDescriptorsUSBV5(const u8 interface, const u8 alt_setting) const
+{
+  return GetDescriptors([interface, alt_setting](const auto& descriptor) {
+    // The USBV5 interfaces present each interface as a different device,
+    // and the descriptors are filtered by alternate setting.
+    return descriptor.bInterfaceNumber == interface && descriptor.bAlternateSetting == alt_setting;
+  });
+}
+
+std::vector<u8>
+Device::GetDescriptors(std::function<bool(const InterfaceDescriptor&)> predicate) const
+{
+  std::vector<u8> buffer;
+
+  const auto device_descriptor = GetDeviceDescriptor();
+  CopyDescriptorToBuffer(&buffer, device_descriptor);
+
+  const auto configurations = GetConfigurations();
+  for (size_t c = 0; c < configurations.size(); ++c)
+  {
+    const auto& config_descriptor = configurations[c];
+    CopyDescriptorToBuffer(&buffer, config_descriptor);
+
+    const auto interfaces = GetInterfaces(static_cast<u8>(c));
+    for (size_t i = interfaces.size(); i-- > 0;)
+    {
+      const auto& descriptor = interfaces[i];
+      if (!predicate(descriptor))
+        continue;
+
+      CopyDescriptorToBuffer(&buffer, descriptor);
+      for (const auto& endpoint_descriptor : GetEndpoints(
+               static_cast<u8>(c), descriptor.bInterfaceNumber, descriptor.bAlternateSetting))
+        CopyDescriptorToBuffer(&buffer, endpoint_descriptor);
+    }
+  }
+  return buffer;
 }
 
 std::string Device::GetErrorName(const int error_code) const
 {
-  return fmt::format("unknown error {}", error_code);
+  return StringFromFormat("unknown error %d", error_code);
 }
-}  // namespace IOS::HLE::USB
+}  // namespace USB
+}  // namespace HLE
+}  // namespace IOS

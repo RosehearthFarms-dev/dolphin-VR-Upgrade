@@ -1,5 +1,6 @@
 // Copyright 2011 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -11,14 +12,14 @@ class PointerWrap;
 class DSPEmulator
 {
 public:
-  virtual ~DSPEmulator();
-  virtual bool IsLLE() const = 0;
+  virtual ~DSPEmulator() {}
+  virtual bool IsLLE() = 0;
 
   virtual bool Initialize(bool wii, bool dsp_thread) = 0;
   virtual void Shutdown() = 0;
 
   virtual void DoState(PointerWrap& p) = 0;
-  virtual void PauseAndLock(bool do_lock) = 0;
+  virtual void PauseAndLock(bool do_lock, bool unpause_on_unlock = true) = 0;
 
   virtual void DSP_WriteMailBoxHigh(bool cpu_mailbox, u16 value) = 0;
   virtual void DSP_WriteMailBoxLow(bool cpu_mailbox, u16 value) = 0;

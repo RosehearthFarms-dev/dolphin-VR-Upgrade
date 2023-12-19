@@ -1,11 +1,14 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <algorithm>
-#include <cstddef>
+#include <cstdlib>
+#include <map>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "Common/BitSet.h"
@@ -13,53 +16,39 @@
 #include "Core/PowerPC/PPCTables.h"
 
 class PPCSymbolDB;
-
-namespace Common
-{
 struct Symbol;
-}
-
-namespace Core
-{
-class CPUThreadGuard;
-}
 
 namespace PPCAnalyst
 {
 struct CodeOp  // 16B
 {
   UGeckoInstruction inst;
-  const GekkoOPInfo* opinfo = nullptr;
-  u32 address = 0;
-  u32 branchTo = 0;  // if UINT32_MAX, not a branch
-  BitSet32 regsIn;
+  GekkoOPInfo* opinfo;
+  u32 address;
+  u32 branchTo;       // if 0, not a branch
+  int branchToIndex;  // index of target block
   BitSet32 regsOut;
+  BitSet32 regsIn;
   BitSet32 fregsIn;
-  s8 fregOut = 0;
-  BitSet8 crIn;
-  BitSet8 crOut;
-  bool isBranchTarget = false;
-  bool branchUsesCtr = false;
-  bool branchIsIdleLoop = false;
-  BitSet8 wantsCR;
-  bool wantsFPRF = false;
-  bool wantsCA = false;
-  bool wantsCAInFlags = false;
-  BitSet8 outputCR;
-  bool outputFPRF = false;
-  bool outputCA = false;
-  bool canEndBlock = false;
-  bool canCauseException = false;
-  bool skipLRStack = false;
-  bool skip = false;  // followed BL-s for example
-  BitSet8 crInUse;
-  BitSet8 crDiscardable;
+  s8 fregOut;
+  bool isBranchTarget;
+  bool wantsCR0;
+  bool wantsCR1;
+  bool wantsFPRF;
+  bool wantsCA;
+  bool wantsCAInFlags;
+  bool outputCR0;
+  bool outputCR1;
+  bool outputFPRF;
+  bool outputCA;
+  bool canEndBlock;
+  bool skipLRStack;
+  bool skip;  // followed BL-s for example
   // which registers are still needed after this instruction in this block
   BitSet32 fprInUse;
   BitSet32 gprInUse;
-  // which registers have values which are known to be unused after this instruction
-  BitSet32 gprDiscardable;
-  BitSet32 fprDiscardable;
+  // just because a register is in use doesn't mean we actually need or want it in an x86 register.
+  BitSet32 gprInReg;
   // we do double stores from GPRs, so we don't want to load a PowerPC floating point register into
   // an XMM only to move it again to a GPR afterwards.
   BitSet32 fprInXmm;
@@ -69,56 +58,98 @@ struct CodeOp  // 16B
   // instruction)
   BitSet32 fprIsDuplicated;
   // whether an fpr is the output of a single-precision arithmetic instruction, i.e. whether we can
-  // convert between single and double formats by just using the host machine's instruction for it.
-  // (The reason why we can't always do this is because some games rely on the exact bits of
-  // denormals and SNaNs being preserved as long as no arithmetic operation is performed on them.)
-  BitSet32 fprIsStoreSafeBeforeInst;
-  BitSet32 fprIsStoreSafeAfterInst;
-
-  BitSet32 GetFregsOut() const
-  {
-    BitSet32 result;
-
-    if (fregOut >= 0)
-      result[fregOut] = true;
-
-    return result;
-  }
+  // safely
+  // skip PPC_FP.
+  BitSet32 fprIsStoreSafe;
 };
 
 struct BlockStats
 {
+  bool isFirstBlockOfFunction;
+  bool isLastBlockOfFunction;
   int numCycles;
 };
 
 struct BlockRegStats
 {
+  short firstRead[32];
+  short firstWrite[32];
+  short lastRead[32];
+  short lastWrite[32];
+  short numReads[32];
+  short numWrites[32];
+
   bool any;
+  bool anyTimer;
+
+  int GetTotalNumAccesses(int reg) const { return numReads[reg] + numWrites[reg]; }
+  int GetUseRange(int reg) const
+  {
+    return std::max(lastRead[reg], lastWrite[reg]) - std::min(firstRead[reg], firstWrite[reg]);
+  }
+
+  bool IsUsed(int reg) const { return (numReads[reg] + numWrites[reg]) > 0; }
+  void SetInputRegister(int reg, short opindex)
+  {
+    if (firstRead[reg] == -1)
+      firstRead[reg] = opindex;
+    lastRead[reg] = opindex;
+    numReads[reg]++;
+  }
+
+  void SetOutputRegister(int reg, short opindex)
+  {
+    if (firstWrite[reg] == -1)
+      firstWrite[reg] = opindex;
+    lastWrite[reg] = opindex;
+    numWrites[reg]++;
+  }
+
+  void Clear()
+  {
+    for (int i = 0; i < 32; ++i)
+    {
+      firstRead[i] = -1;
+      firstWrite[i] = -1;
+      numReads[i] = 0;
+      numWrites[i] = 0;
+    }
+  }
 };
 
-using CodeBuffer = std::vector<CodeOp>;
+class CodeBuffer
+{
+public:
+  CodeBuffer(int size);
+  ~CodeBuffer();
+
+  int GetSize() const { return size_; }
+  PPCAnalyst::CodeOp* codebuffer;
+
+private:
+  int size_;
+};
 
 struct CodeBlock
 {
   // Beginning PPC address.
-  u32 m_address = 0;
+  u32 m_address;
 
   // Number of instructions
   // Gives us the size of the block.
-  u32 m_num_instructions = 0;
+  u32 m_num_instructions;
 
   // Some basic statistics about the block.
-  BlockStats* m_stats = nullptr;
+  BlockStats* m_stats;
 
   // Register statistics about the block.
-  BlockRegStats* m_gpa = nullptr;
-  BlockRegStats* m_fpa = nullptr;
+  BlockRegStats *m_gpa, *m_fpa;
 
   // Are we a broken block?
-  bool m_broken = false;
+  bool m_broken;
 
   // Did we have a memory_exception?
-  bool m_memory_exception = false;
+  bool m_memory_exception;
 
   // Which GQRs this block uses, if any.
   BitSet8 m_gqr_used;
@@ -135,6 +166,21 @@ struct CodeBlock
 
 class PPCAnalyzer
 {
+private:
+  enum ReorderType
+  {
+    REORDER_CARRY,
+    REORDER_CMP,
+    REORDER_CROR
+  };
+
+  void ReorderInstructionsCore(u32 instructions, CodeOp* code, bool reverse, ReorderType type);
+  void ReorderInstructions(u32 instructions, CodeOp* code);
+  void SetInstructionStats(CodeBlock* block, CodeOp* code, const GekkoOPInfo* opinfo, u32 index);
+
+  // Options
+  u32 m_options;
+
 public:
   enum AnalystOption
   {
@@ -174,45 +220,17 @@ public:
     OPTION_CROR_MERGE = (1 << 6),
   };
 
+  PPCAnalyzer() : m_options(0) {}
   // Option setting/getting
   void SetOption(AnalystOption option) { m_options |= option; }
   void ClearOption(AnalystOption option) { m_options &= ~(option); }
   bool HasOption(AnalystOption option) const { return !!(m_options & option); }
-  void SetDebuggingEnabled(bool enabled) { m_is_debugging_enabled = enabled; }
-  void SetBranchFollowingEnabled(bool enabled) { m_enable_branch_following = enabled; }
-  void SetFloatExceptionsEnabled(bool enabled) { m_enable_float_exceptions = enabled; }
-  void SetDivByZeroExceptionsEnabled(bool enabled) { m_enable_div_by_zero_exceptions = enabled; }
-  u32 Analyze(u32 address, CodeBlock* block, CodeBuffer* buffer, std::size_t block_size) const;
-
-private:
-  enum class ReorderType
-  {
-    Carry,
-    CMP,
-    CROR
-  };
-
-  bool CanSwapAdjacentOps(const CodeOp& a, const CodeOp& b) const;
-  void ReorderInstructionsCore(u32 instructions, CodeOp* code, bool reverse,
-                               ReorderType type) const;
-  void ReorderInstructions(u32 instructions, CodeOp* code) const;
-  void SetInstructionStats(CodeBlock* block, CodeOp* code, const GekkoOPInfo* opinfo) const;
-  bool IsBusyWaitLoop(CodeBlock* block, CodeOp* code, size_t instructions) const;
-
-  // Options
-  u32 m_options = 0;
-
-  bool m_is_debugging_enabled = false;
-  bool m_enable_branch_following = false;
-  bool m_enable_float_exceptions = false;
-  bool m_enable_div_by_zero_exceptions = false;
+  u32 Analyze(u32 address, CodeBlock* block, CodeBuffer* buffer, u32 blockSize);
 };
 
-void FindFunctions(const Core::CPUThreadGuard& guard, u32 startAddr, u32 endAddr,
-                   PPCSymbolDB* func_db);
-bool AnalyzeFunction(const Core::CPUThreadGuard& guard, u32 startAddr, Common::Symbol& func,
-                     u32 max_size = 0);
-bool ReanalyzeFunction(const Core::CPUThreadGuard& guard, u32 start_addr, Common::Symbol& func,
-                       u32 max_size = 0);
+void LogFunctionCall(u32 addr);
+void FindFunctions(u32 startAddr, u32 endAddr, PPCSymbolDB* func_db);
+bool AnalyzeFunction(u32 startAddr, Symbol& func, int max_size = 0);
+bool ReanalyzeFunction(u32 start_addr, Symbol& func, int max_size = 0);
 
-}  // namespace PPCAnalyst
+}  // namespace

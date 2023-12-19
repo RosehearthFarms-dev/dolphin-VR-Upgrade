@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/IOS/USB/OH0/OH0Device.h"
 
@@ -13,11 +14,15 @@
 #include "Core/IOS/IOS.h"
 #include "Core/IOS/USB/OH0/OH0.h"
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
+{
+namespace Device
 {
 static void GetVidPidFromDevicePath(const std::string& device_path, u16& vid, u16& pid)
 {
-  std::istringstream stream{device_path};
+  std::stringstream stream{device_path};
   std::string segment;
   std::vector<std::string> list;
   while (std::getline(stream, segment, '/'))
@@ -35,8 +40,7 @@ static void GetVidPidFromDevicePath(const std::string& device_path, u16& vid, u1
   ss >> pid;
 }
 
-OH0Device::OH0Device(EmulationKernel& ios, const std::string& name)
-    : EmulationDevice(ios, name, DeviceType::OH0)
+OH0Device::OH0Device(Kernel& ios, const std::string& name) : Device(ios, name, DeviceType::OH0)
 {
   if (!name.empty())
     GetVidPidFromDevicePath(name, m_vid, m_pid);
@@ -44,38 +48,44 @@ OH0Device::OH0Device(EmulationKernel& ios, const std::string& name)
 
 void OH0Device::DoState(PointerWrap& p)
 {
-  m_oh0 = std::static_pointer_cast<OH0>(GetEmulationKernel().GetDeviceByName("/dev/usb/oh0"));
-  Device::DoState(p);
+  m_oh0 = std::static_pointer_cast<OH0>(GetIOS()->GetDeviceByName("/dev/usb/oh0"));
+  p.Do(m_name);
   p.Do(m_vid);
   p.Do(m_pid);
   p.Do(m_device_id);
 }
 
-std::optional<IPCReply> OH0Device::Open(const OpenRequest& request)
+ReturnCode OH0Device::Open(const OpenRequest& request)
 {
-  if (m_vid == 0 && m_pid == 0)
-    return IPCReply(IPC_ENOENT);
+  const u32 ios_major_version = m_ios.GetVersion();
+  if (ios_major_version == 57 || ios_major_version == 58 || ios_major_version == 59)
+    return IPC_ENOENT;
 
-  m_oh0 = std::static_pointer_cast<OH0>(GetEmulationKernel().GetDeviceByName("/dev/usb/oh0"));
+  if (m_vid == 0 && m_pid == 0)
+    return IPC_ENOENT;
+
+  m_oh0 = std::static_pointer_cast<OH0>(GetIOS()->GetDeviceByName("/dev/usb/oh0"));
 
   ReturnCode return_code;
   std::tie(return_code, m_device_id) = m_oh0->DeviceOpen(m_vid, m_pid);
-  return IPCReply(return_code);
+  return return_code;
 }
 
-std::optional<IPCReply> OH0Device::Close(u32 fd)
+ReturnCode OH0Device::Close(u32 fd)
 {
   m_oh0->DeviceClose(m_device_id);
   return Device::Close(fd);
 }
 
-std::optional<IPCReply> OH0Device::IOCtl(const IOCtlRequest& request)
+IPCCommandResult OH0Device::IOCtl(const IOCtlRequest& request)
 {
   return m_oh0->DeviceIOCtl(m_device_id, request);
 }
 
-std::optional<IPCReply> OH0Device::IOCtlV(const IOCtlVRequest& request)
+IPCCommandResult OH0Device::IOCtlV(const IOCtlVRequest& request)
 {
   return m_oh0->DeviceIOCtlV(m_device_id, request);
 }
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

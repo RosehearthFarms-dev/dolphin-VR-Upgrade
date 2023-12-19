@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -9,17 +10,19 @@
 #include "Core/IOS/Device.h"
 #include "Core/IOS/Network/NCD/WiiNetConfig.h"
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
+{
+namespace Device
 {
 // Interface for reading and changing network configuration (probably some other stuff as well)
-class NetNCDManageDevice : public EmulationDevice
+class NetNCDManage : public Device
 {
 public:
-  NetNCDManageDevice(EmulationKernel& ios, const std::string& device_name);
+  NetNCDManage(Kernel& ios, const std::string& device_name);
 
-  std::optional<IPCReply> IOCtlV(const IOCtlVRequest& request) override;
-
-  void DoState(PointerWrap& p) override;
+  IPCCommandResult IOCtlV(const IOCtlVRequest& request) override;
 
 private:
   enum
@@ -35,6 +38,7 @@ private:
   };
 
   Net::WiiNetConfig config;
-  u32 m_ipc_fd = 0;
 };
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // Implementation of an IOSC-like API, but much simpler since we only support actual keys.
 
@@ -7,34 +8,26 @@
 
 #include <array>
 #include <cstddef>
-#include <utility>
 #include <vector>
 
 #include "Common/CommonTypes.h"
 #include "Common/Crypto/AES.h"
-#include "Common/Crypto/ec.h"
 
 class PointerWrap;
 
 namespace IOS
 {
-namespace ES
-{
-class CertReader;
-}  // namespace ES
-
 enum class SignatureType : u32
 {
   RSA4096 = 0x00010000,
   RSA2048 = 0x00010001,
-  ECC = 0x00010002,
+  // XXX: Add support for ECC (0x00010002).
 };
 
 enum class PublicKeyType : u32
 {
   RSA4096 = 0,
   RSA2048 = 1,
-  ECC = 2,
 };
 
 #pragma pack(push, 4)
@@ -59,7 +52,7 @@ static_assert(sizeof(SignatureRSA2048) == 0x180, "Wrong size for SignatureRSA204
 struct SignatureECC
 {
   SignatureType type;
-  Common::ec::Signature sig;
+  u8 sig[0x3c];
   u8 fill[0x40];
   char issuer[0x40];
 };
@@ -73,47 +66,34 @@ struct CertHeader
   u32 id;
 };
 
-using RSA2048PublicKey = std::array<u8, 0x100>;
-
-struct CertRSA4096RSA2048
+struct CertRSA4096
 {
   SignatureRSA4096 signature;
   CertHeader header;
-  RSA2048PublicKey public_key;
+  // The signature is RSA4096, but the key is a RSA2048 public key,
+  // so its size is 0x100, not 0x200, as one would expect from the name.
+  u8 public_key[0x100];
   u8 exponent[0x4];
   u8 pad[0x34];
 };
-static_assert(sizeof(CertRSA4096RSA2048) == 0x400, "Wrong size for CertRSA4096RSA2048");
+static_assert(sizeof(CertRSA4096) == 0x400, "Wrong size for CertRSA4096");
 
-struct CertRSA2048RSA2048
+struct CertRSA2048
 {
   SignatureRSA2048 signature;
   CertHeader header;
-  RSA2048PublicKey public_key;
+  u8 public_key[0x100];
   u8 exponent[0x4];
   u8 pad[0x34];
 };
-static_assert(sizeof(CertRSA2048RSA2048) == 0x300, "Wrong size for CertRSA2048RSA2048");
+static_assert(sizeof(CertRSA2048) == 0x300, "Wrong size for CertRSA2048");
 
-/// Used for device certificates
-struct CertRSA2048ECC
+union Cert
 {
-  SignatureRSA2048 signature;
-  CertHeader header;
-  Common::ec::PublicKey public_key;
-  std::array<u8, 60> padding;
+  SignatureType type;
+  CertRSA4096 rsa4096;
+  CertRSA2048 rsa2048;
 };
-static_assert(sizeof(CertRSA2048ECC) == 0x240, "Wrong size for CertRSA2048ECC");
-
-/// Used for device signed certificates
-struct CertECC
-{
-  SignatureECC signature;
-  CertHeader header;
-  Common::ec::PublicKey public_key;
-  std::array<u8, 60> padding;
-};
-static_assert(sizeof(CertECC) == 0x180, "Wrong size for CertECC");
 #pragma pack(pop)
 
 namespace HLE
@@ -136,7 +116,7 @@ public:
   // More information on default handles: https://wiibrew.org/wiki/IOS/Syscalls
   enum DefaultHandle : u32
   {
-    // NG private key. ECC-233 private signing key (per-console)
+    // ECC-233 private signing key (per-console)
     HANDLE_CONSOLE_KEY = 0,
     // Console ID
     HANDLE_CONSOLE_ID = 1,
@@ -164,9 +144,6 @@ public:
     HANDLE_ROOT_KEY = 0xfffffff,
   };
 
-  static constexpr std::array<DefaultHandle, 2> COMMON_KEY_HANDLES = {HANDLE_COMMON_KEY,
-                                                                      HANDLE_NEW_COMMON_KEY};
-
   enum ObjectType : u8
   {
     TYPE_SECRET_KEY = 0,
@@ -174,15 +151,15 @@ public:
     TYPE_DATA = 3,
   };
 
-  enum class ObjectSubType : u8
+  enum ObjectSubType : u8
   {
-    AES128 = 0,
-    MAC = 1,
-    RSA2048 = 2,
-    RSA4096 = 3,
-    ECC233 = 4,
-    Data = 5,
-    Version = 6
+    SUBTYPE_AES128 = 0,
+    SUBTYPE_MAC = 1,
+    SUBTYPE_RSA2048 = 2,
+    SUBTYPE_RSA4096 = 3,
+    SUBTYPE_ECC233 = 4,
+    SUBTYPE_DATA = 5,
+    SUBTYPE_VERSION = 6
   };
 
   IOSC(ConsoleType console_type = ConsoleType::Retail);
@@ -211,19 +188,13 @@ public:
                      u32 pid) const;
 
   ReturnCode VerifyPublicKeySign(const std::array<u8, 20>& sha1, Handle signer_handle,
-                                 const std::vector<u8>& signature, u32 pid) const;
+                                 const u8* signature, u32 pid) const;
   // Import a certificate (signed by the certificate in signer_handle) into dest_handle.
-  ReturnCode ImportCertificate(const ES::CertReader& cert, Handle signer_handle, Handle dest_handle,
-                               u32 pid);
+  ReturnCode ImportCertificate(const u8* cert, Handle signer_handle, Handle dest_handle, u32 pid);
 
   // Ownership
   ReturnCode GetOwnership(Handle handle, u32* owner) const;
   ReturnCode SetOwnership(Handle handle, u32 owner, u32 pid);
-
-  bool IsUsingDefaultId() const;
-  u32 GetDeviceId() const;
-  CertECC GetDeviceCertificate() const;
-  void Sign(u8* sig_out, u8* ap_cert_out, u64 title_id, const u8* data, u32 data_size) const;
 
   void DoState(PointerWrap& p);
 
@@ -232,15 +203,15 @@ private:
   {
     KeyEntry();
     KeyEntry(ObjectType type_, ObjectSubType subtype_, std::vector<u8>&& data_, u32 owner_mask_);
-    KeyEntry(ObjectType type_, ObjectSubType subtype_, std::vector<u8>&& data_, u32 misc_data_,
-             u32 owner_mask_);
+    KeyEntry(ObjectType type_, ObjectSubType subtype_, std::vector<u8>&& data_,
+             std::array<u8, 4>&& misc_data_, u32 owner_mask_);
     void DoState(PointerWrap& p);
 
     bool in_use = false;
-    ObjectType type{};
-    ObjectSubType subtype{};
+    ObjectType type;
+    ObjectSubType subtype;
     std::vector<u8> data;
-    u32 misc_data = 0;
+    std::array<u8, 4> misc_data{};
     u32 owner_mask = 0;
   };
   // The Wii's IOSC is limited to 32 entries, including 12 built-in entries.
@@ -252,8 +223,7 @@ private:
     ExcludeRootKey,
   };
 
-  void LoadDefaultEntries();
-  void LoadEntries();
+  void LoadDefaultEntries(ConsoleType console_type);
 
   KeyEntries::iterator FindFreeEntry();
   KeyEntry* FindEntry(Handle handle);
@@ -265,13 +235,8 @@ private:
   ReturnCode DecryptEncrypt(Common::AES::Mode mode, Handle key_handle, u8* iv, const u8* input,
                             size_t size, u8* output, u32 pid) const;
 
-  ConsoleType m_console_type{ConsoleType::Retail};
   KeyEntries m_key_entries;
   KeyEntry m_root_key_entry;
-  Common::ec::Signature m_console_signature{};
-  u32 m_ms_id = 0;
-  u32 m_ca_id = 0;
-  u32 m_console_key_id = 0;
 };
 }  // namespace HLE
 }  // namespace IOS

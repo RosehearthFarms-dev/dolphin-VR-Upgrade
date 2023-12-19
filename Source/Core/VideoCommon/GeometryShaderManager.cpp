@@ -1,18 +1,24 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "VideoCommon/GeometryShaderManager.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <cstring>
 
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
 #include "VideoCommon/BPMemory.h"
-#include "VideoCommon/RenderState.h"
+#include "VideoCommon/GeometryShaderManager.h"
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/XFMemory.h"
 
-static constexpr int LINE_PT_TEX_OFFSETS[8] = {0, 16, 8, 4, 2, 1, 1, 1};
+static const int LINE_PT_TEX_OFFSETS[8] = {0, 16, 8, 4, 2, 1, 1, 1};
+
+GeometryShaderConstants GeometryShaderManager::constants;
+std::vector<GeometryShaderConstants> GeometryShaderManager::constants_replay;
+bool GeometryShaderManager::dirty;
+
+static bool s_projection_changed;
+static bool s_viewport_changed;
 
 void GeometryShaderManager::Init()
 {
@@ -29,60 +35,18 @@ void GeometryShaderManager::Dirty()
 {
   // This function is called after a savestate is loaded.
   // Any constants that can changed based on settings should be re-calculated
-  m_projection_changed = true;
-
-  // Uses EFB scale config
-  SetLinePtWidthChanged();
+  s_projection_changed = true;
 
   dirty = true;
 }
 
-void GeometryShaderManager::SetVSExpand(VSExpand expand)
+void GeometryShaderManager::SetConstants()
 {
-  if (constants.vs_expand != expand)
+  s_projection_changed = false;
+
+  if (s_viewport_changed)
   {
-    constants.vs_expand = expand;
-    dirty = true;
-  }
-}
-
-void GeometryShaderManager::SetConstants(PrimitiveType prim)
-{
-  if (m_projection_changed && g_ActiveConfig.stereo_mode != StereoMode::Off)
-  {
-    m_projection_changed = false;
-
-    if (xfmem.projection.type == ProjectionType::Perspective)
-    {
-      float offset = (g_ActiveConfig.iStereoDepth / 1000.0f) *
-                     (g_ActiveConfig.iStereoDepthPercentage / 100.0f);
-      constants.stereoparams[0] = g_ActiveConfig.bStereoSwapEyes ? offset : -offset;
-      constants.stereoparams[1] = g_ActiveConfig.bStereoSwapEyes ? -offset : offset;
-    }
-    else
-    {
-      constants.stereoparams[0] = constants.stereoparams[1] = 0;
-    }
-
-    constants.stereoparams[2] = (float)(g_ActiveConfig.iStereoConvergence *
-                                        (g_ActiveConfig.iStereoConvergencePercentage / 100.0f));
-
-    dirty = true;
-  }
-
-  if (g_ActiveConfig.UseVSForLinePointExpand())
-  {
-    if (prim == PrimitiveType::Points)
-      SetVSExpand(VSExpand::Point);
-    else if (prim == PrimitiveType::Lines)
-      SetVSExpand(VSExpand::Line);
-    else
-      SetVSExpand(VSExpand::None);
-  }
-
-  if (m_viewport_changed)
-  {
-    m_viewport_changed = false;
+    s_viewport_changed = false;
 
     constants.lineptparams[0] = 2.0f * xfmem.viewport.wd;
     constants.lineptparams[1] = -2.0f * xfmem.viewport.ht;
@@ -93,12 +57,12 @@ void GeometryShaderManager::SetConstants(PrimitiveType prim)
 
 void GeometryShaderManager::SetViewportChanged()
 {
-  m_viewport_changed = true;
+  s_viewport_changed = true;
 }
 
 void GeometryShaderManager::SetProjectionChanged()
 {
-  m_projection_changed = true;
+  s_projection_changed = true;
 }
 
 void GeometryShaderManager::SetLinePtWidthChanged()
@@ -123,12 +87,12 @@ void GeometryShaderManager::SetTexCoordChanged(u8 texmapid)
 
 void GeometryShaderManager::DoState(PointerWrap& p)
 {
-  p.Do(m_projection_changed);
-  p.Do(m_viewport_changed);
+  p.Do(s_projection_changed);
+  p.Do(s_viewport_changed);
 
   p.Do(constants);
 
-  if (p.IsReadMode())
+  if (p.GetMode() == PointerWrap::MODE_READ)
   {
     // Fixup the current state from global GPU state
     // NOTE: This requires that all GPU memory has been loaded already.

@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -18,61 +19,68 @@
 #include <deque>
 #include <list>
 #include <map>
-#include <optional>
 #include <set>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include <fmt/format.h>
-
 #include "Common/Assert.h"
+#include "Common/Common.h"
 #include "Common/CommonTypes.h"
-#include "Common/EnumMap.h"
+#include "Common/File.h"
+#include "Common/FileUtil.h"
 #include "Common/Flag.h"
-#include "Common/Inline.h"
 #include "Common/Logging/Log.h"
+
+// ewww
+
+#ifndef __has_feature
+#define __has_feature(x) (0)
+#endif
+
+#if (__has_feature(is_trivially_copyable) &&                                                       \
+     (defined(_LIBCPP_VERSION) || defined(__GLIBCXX__))) ||                                        \
+    (defined(__GNUC__) && __GNUC__ >= 5)
+#define IsTriviallyCopyable(T)                                                                     \
+  std::is_trivially_copyable<typename std::remove_volatile<T>::type>::value
+#elif __GNUC__
+#define IsTriviallyCopyable(T) std::has_trivial_copy_constructor<T>::value
+#elif _MSC_VER
+// (shuffle2) see https://github.com/dolphin-emu/dolphin/pull/2218
+#define IsTriviallyCopyable(T) 1
+#else
+#error No version of is_trivially_copyable
+#endif
 
 // Wrapper class
 class PointerWrap
 {
 public:
-  enum class Mode
+  enum Mode
   {
-    Read,
-    Write,
-    Measure,
-    Verify,
+    MODE_READ = 1,  // load
+    MODE_WRITE,     // save
+    MODE_MEASURE,   // calculate size
+    MODE_VERIFY,    // compare
   };
 
-private:
-  u8** m_ptr_current;
-  u8* m_ptr_end;
-  Mode m_mode;
+  u8** ptr;
+  Mode mode;
 
 public:
-  PointerWrap(u8** ptr, size_t size, Mode mode)
-      : m_ptr_current(ptr), m_ptr_end(*ptr + size), m_mode(mode)
-  {
-  }
-
-  void SetMeasureMode() { m_mode = Mode::Measure; }
-  void SetVerifyMode() { m_mode = Mode::Verify; }
-  bool IsReadMode() const { return m_mode == Mode::Read; }
-  bool IsWriteMode() const { return m_mode == Mode::Write; }
-  bool IsMeasureMode() const { return m_mode == Mode::Measure; }
-  bool IsVerifyMode() const { return m_mode == Mode::Verify; }
-
+  PointerWrap(u8** ptr_, Mode mode_) : ptr(ptr_), mode(mode_) {}
+  void SetMode(Mode mode_) { mode = mode_; }
+  Mode GetMode() const { return mode; }
   template <typename K, class V>
   void Do(std::map<K, V>& x)
   {
     u32 count = (u32)x.size();
     Do(count);
 
-    switch (m_mode)
+    switch (mode)
     {
-    case Mode::Read:
+    case MODE_READ:
       for (x.clear(); count != 0; --count)
       {
         std::pair<K, V> pair;
@@ -82,9 +90,9 @@ public:
       }
       break;
 
-    case Mode::Write:
-    case Mode::Measure:
-    case Mode::Verify:
+    case MODE_WRITE:
+    case MODE_MEASURE:
+    case MODE_VERIFY:
       for (auto& elem : x)
       {
         Do(elem.first);
@@ -100,20 +108,20 @@ public:
     u32 count = (u32)x.size();
     Do(count);
 
-    switch (m_mode)
+    switch (mode)
     {
-    case Mode::Read:
+    case MODE_READ:
       for (x.clear(); count != 0; --count)
       {
-        V value = {};
+        V value;
         Do(value);
         x.insert(value);
       }
       break;
 
-    case Mode::Write:
-    case Mode::Measure:
-    case Mode::Verify:
+    case MODE_WRITE:
+    case MODE_MEASURE:
+    case MODE_VERIFY:
       for (const V& val : x)
       {
         Do(val);
@@ -125,7 +133,7 @@ public:
   template <typename T>
   void Do(std::vector<T>& x)
   {
-    DoContiguousContainer(x);
+    DoContainer(x);
   }
 
   template <typename T>
@@ -143,7 +151,7 @@ public:
   template <typename T>
   void Do(std::basic_string<T>& x)
   {
-    DoContiguousContainer(x);
+    DoContainer(x);
   }
 
   template <typename T, typename U>
@@ -153,59 +161,17 @@ public:
     Do(x.second);
   }
 
-  template <typename T>
-  void Do(std::optional<T>& x)
-  {
-    bool present = x.has_value();
-    Do(present);
-
-    switch (m_mode)
-    {
-    case Mode::Read:
-      if (present)
-      {
-        x = std::make_optional<T>();
-        Do(x.value());
-      }
-      else
-      {
-        x = std::nullopt;
-      }
-      break;
-
-    case Mode::Write:
-    case Mode::Measure:
-    case Mode::Verify:
-      if (present)
-        Do(x.value());
-
-      break;
-    }
-  }
-
   template <typename T, std::size_t N>
   void DoArray(std::array<T, N>& x)
   {
-    DoArray(x.data(), static_cast<u32>(x.size()));
+    DoArray(x.data(), (u32)x.size());
   }
 
-  template <typename V, auto last_member, typename = decltype(last_member)>
-  void DoArray(Common::EnumMap<V, last_member>& x)
-  {
-    DoArray(x.data(), static_cast<u32>(x.size()));
-  }
-
-  template <typename T, typename std::enable_if_t<std::is_trivially_copyable_v<T>, int> = 0>
+  template <typename T>
   void DoArray(T* x, u32 count)
   {
+    static_assert(IsTriviallyCopyable(T), "Only sane for trivially copyable types");
     DoVoid(x, count * sizeof(T));
-  }
-
-  template <typename T, typename std::enable_if_t<!std::is_trivially_copyable_v<T>, int> = 0>
-  void DoArray(T* x, u32 count)
-  {
-    for (u32 i = 0; i < count; ++i)
-      Do(x[i]);
   }
 
   template <typename T, std::size_t N>
@@ -214,62 +180,37 @@ public:
     DoArray(arr, static_cast<u32>(N));
   }
 
-  // The caller is required to inspect the mode of this PointerWrap
-  // and deal with the pointer returned from this function themself.
-  [[nodiscard]] u8* DoExternal(u32& count)
-  {
-    Do(count);
-    u8* current = *m_ptr_current;
-    *m_ptr_current += count;
-    if (!IsMeasureMode() && *m_ptr_current > m_ptr_end)
-    {
-      // trying to read/write past the end of the buffer, prevent this
-      SetMeasureMode();
-    }
-    return current;
-  }
-
-  // The reserved u32 is set to 0, and a pointer to it is returned.
-  // The caller needs to fill in the reserved u32 with the appropriate value later on, if they
-  // want a non-zero value there.
-  [[nodiscard]] u8* ReserveU32()
-  {
-    u32 temp = 0;
-    u8* previous_pointer = *m_ptr_current;
-    Do(temp);
-    return previous_pointer;
-  }
-
-  u32 GetOffsetFromPreviousPosition(u8* previous_pointer)
-  {
-    return static_cast<u32>((*m_ptr_current) - previous_pointer);
-  }
-
   void Do(Common::Flag& flag)
   {
     bool s = flag.IsSet();
     Do(s);
-    if (IsReadMode())
+    if (mode == MODE_READ)
       flag.Set(s);
   }
 
   template <typename T>
   void Do(std::atomic<T>& atomic)
   {
-    T temp = atomic.load(std::memory_order_relaxed);
+    T temp = atomic.load();
     Do(temp);
-    if (IsReadMode())
-      atomic.store(temp, std::memory_order_relaxed);
+    if (mode == MODE_READ)
+      atomic.store(temp);
   }
 
   template <typename T>
   void Do(T& x)
   {
-    static_assert(std::is_trivially_copyable_v<T>, "Only sane for trivially copyable types");
+    static_assert(IsTriviallyCopyable(T), "Only sane for trivially copyable types");
     // Note:
     // Usually we can just use x = **ptr, etc.  However, this doesn't work
     // for unions containing BitFields (long story, stupid language rules)
     // or arrays.  This will get optimized anyway.
+    DoVoid((void*)&x, sizeof(x));
+  }
+
+  template <typename T>
+  void DoPOD(T& x)
+  {
     DoVoid((void*)&x, sizeof(x));
   }
 
@@ -282,7 +223,7 @@ public:
 
     Do(stable);
 
-    if (IsReadMode())
+    if (mode == MODE_READ)
       x = stable != 0;
   }
 
@@ -293,7 +234,7 @@ public:
     // much range
     ptrdiff_t offset = x - base;
     Do(offset);
-    if (IsReadMode())
+    if (mode == MODE_READ)
     {
       x = base + offset;
     }
@@ -304,13 +245,12 @@ public:
     u32 cookie = arbitraryNumber;
     Do(cookie);
 
-    if (IsReadMode() && cookie != arbitraryNumber)
+    if (mode == PointerWrap::MODE_READ && cookie != arbitraryNumber)
     {
-      PanicAlertFmtT(
-          "Error: After \"{0}\", found {1} ({2:#x}) instead of save marker {3} ({4:#x}). Aborting "
-          "savestate load...",
-          prevName, cookie, cookie, arbitraryNumber, arbitraryNumber);
-      SetMeasureMode();
+      PanicAlertT("Error: After \"%s\", found %d (0x%X) instead of save marker %d (0x%X). Aborting "
+                  "savestate load...",
+                  prevName.c_str(), cookie, cookie, arbitraryNumber, arbitraryNumber);
+      mode = PointerWrap::MODE_MEASURE;
     }
   }
 
@@ -327,50 +267,33 @@ public:
 
 private:
   template <typename T>
-  void DoContiguousContainer(T& container)
-  {
-    u32 size = static_cast<u32>(container.size());
-    Do(size);
-    container.resize(size);
-
-    if (size > 0)
-      DoArray(&container[0], size);
-  }
-
-  template <typename T>
   void DoContainer(T& x)
   {
     DoEachElement(x, [](PointerWrap& p, typename T::value_type& elem) { p.Do(elem); });
   }
 
-  DOLPHIN_FORCE_INLINE void DoVoid(void* data, u32 size)
+  __forceinline void DoVoid(void* data, u32 size)
   {
-    if (!IsMeasureMode() && (*m_ptr_current + size) > m_ptr_end)
+    switch (mode)
     {
-      // trying to read/write past the end of the buffer, prevent this
-      SetMeasureMode();
-    }
-
-    switch (m_mode)
-    {
-    case Mode::Read:
-      memcpy(data, *m_ptr_current, size);
+    case MODE_READ:
+      memcpy(data, *ptr, size);
       break;
 
-    case Mode::Write:
-      memcpy(*m_ptr_current, data, size);
+    case MODE_WRITE:
+      memcpy(*ptr, data, size);
       break;
 
-    case Mode::Measure:
+    case MODE_MEASURE:
       break;
 
-    case Mode::Verify:
-      DEBUG_ASSERT_MSG(COMMON, !memcmp(data, *m_ptr_current, size),
-                       "Savestate verification failure: buf {} != {} (size {}).\n", fmt::ptr(data),
-                       fmt::ptr(*m_ptr_current), size);
+    case MODE_VERIFY:
+      _dbg_assert_msg_(COMMON, !memcmp(data, *ptr, size),
+                       "Savestate verification failure: buf %p != %p (size %u).\n", data, *ptr,
+                       size);
       break;
     }
 
-    *m_ptr_current += size;
+    *ptr += size;
   }
 };

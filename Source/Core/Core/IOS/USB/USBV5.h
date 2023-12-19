@@ -1,25 +1,18 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include <array>
-#include <functional>
-#include <memory>
-#include <mutex>
-
 #include "Common/CommonTypes.h"
-#include "Core/IOS/Device.h"
-#include "Core/IOS/IOS.h"
 #include "Core/IOS/USB/Common.h"
-#include "Core/IOS/USB/Host.h"
-
-class PointerWrap;
 
 // Used by late USB interfaces for /dev/usb/ven and /dev/usb/hid (since IOS57 which
 // reorganised the USB modules in IOS).
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
 {
 struct IOCtlRequest;
 
@@ -43,67 +36,23 @@ enum V5Requests
 
 struct V5CtrlMessage final : CtrlMessage
 {
-  V5CtrlMessage(EmulationKernel& ios, const IOCtlVRequest& ioctlv);
+  V5CtrlMessage(Kernel& ios, const IOCtlVRequest& ioctlv);
 };
 
 struct V5BulkMessage final : BulkMessage
 {
-  V5BulkMessage(EmulationKernel& ios, const IOCtlVRequest& ioctlv);
+  V5BulkMessage(Kernel& ios, const IOCtlVRequest& ioctlv);
 };
 
 struct V5IntrMessage final : IntrMessage
 {
-  V5IntrMessage(EmulationKernel& ios, const IOCtlVRequest& ioctlv);
+  V5IntrMessage(Kernel& ios, const IOCtlVRequest& ioctlv);
 };
 
 struct V5IsoMessage final : IsoMessage
 {
-  V5IsoMessage(EmulationKernel& ios, const IOCtlVRequest& cmd_buffer);
+  V5IsoMessage(Kernel& ios, const IOCtlVRequest& cmd_buffer);
 };
 }  // namespace USB
-
-class USBV5ResourceManager : public USBHost
-{
-public:
-  using USBHost::USBHost;
-
-  std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override = 0;
-  std::optional<IPCReply> IOCtlV(const IOCtlVRequest& request) override = 0;
-
-  void DoState(PointerWrap& p) override;
-
-protected:
-  struct USBV5Device;
-  USBV5Device* GetUSBV5Device(u32 in_buffer);
-
-  std::optional<IPCReply> GetDeviceChange(const IOCtlRequest& request);
-  IPCReply SetAlternateSetting(USBV5Device& device, const IOCtlRequest& request);
-  IPCReply Shutdown(const IOCtlRequest& request);
-  IPCReply SuspendResume(USBV5Device& device, const IOCtlRequest& request);
-
-  using Handler = std::function<std::optional<IPCReply>(USBV5Device&)>;
-  std::optional<IPCReply> HandleDeviceIOCtl(const IOCtlRequest& request, Handler handler);
-
-  void OnDeviceChange(ChangeEvent event, std::shared_ptr<USB::Device> device) override;
-  void OnDeviceChangeEnd() override;
-  void TriggerDeviceChangeReply();
-  virtual bool HasInterfaceNumberInIDs() const = 0;
-
-  bool m_has_pending_changes = true;
-  std::mutex m_devicechange_hook_address_mutex;
-  std::unique_ptr<IOCtlRequest> m_devicechange_hook_request;
-
-  // Each interface of a USB device is internally considered as a unique device.
-  // USBv5 resource managers can handle up to 32 devices/interfaces.
-  struct USBV5Device
-  {
-    bool in_use = false;
-    u8 interface_number = 0;
-    u16 number = 0;
-    u64 host_id = 0;
-  };
-  std::array<USBV5Device, 32> m_usbv5_devices{};
-  mutable std::mutex m_usbv5_devices_mutex;
-  u16 m_current_device_number = 0x21;
-};
-}  // namespace IOS::HLE
+}  // namespace HLE
+}  // namespace IOS

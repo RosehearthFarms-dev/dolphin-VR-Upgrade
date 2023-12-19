@@ -1,5 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/DSP/DSPCaptureLogger.h"
 
@@ -8,7 +9,7 @@
 #include <string>
 
 #include "Common/CommonTypes.h"
-#include "Common/IOFile.h"
+#include "Common/File.h"
 #include "Common/PcapFile.h"
 
 namespace DSP
@@ -39,16 +40,15 @@ struct DMAPacket
 #pragma pack(pop)
 
 PCAPDSPCaptureLogger::PCAPDSPCaptureLogger(const std::string& pcap_filename)
-    : m_pcap(new Common::PCAP(new File::IOFile(pcap_filename, "wb")))
+    : m_pcap(new PCAP(new File::IOFile(pcap_filename, "wb")))
 {
 }
 
-PCAPDSPCaptureLogger::PCAPDSPCaptureLogger(Common::PCAP* pcap) : m_pcap(pcap)
+PCAPDSPCaptureLogger::PCAPDSPCaptureLogger(PCAP* pcap) : m_pcap(pcap)
 {
 }
 
-PCAPDSPCaptureLogger::PCAPDSPCaptureLogger(std::unique_ptr<Common::PCAP>&& pcap)
-    : m_pcap(std::move(pcap))
+PCAPDSPCaptureLogger::PCAPDSPCaptureLogger(std::unique_ptr<PCAP>&& pcap) : m_pcap(std::move(pcap))
 {
 }
 

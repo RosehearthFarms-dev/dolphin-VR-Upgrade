@@ -1,9 +1,11 @@
 // Copyright 2013 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/PowerPC/JitInterface.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdio>
 #include <string>
 #include <unordered_set>
@@ -14,25 +16,20 @@
 #include "Common/PerformanceCounter.h"
 #endif
 
-#include <fmt/format.h>
-
-#include "Common/Assert.h"
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
-#include "Common/IOFile.h"
+#include "Common/File.h"
 #include "Common/MsgHandler.h"
 
 #include "Core/Core.h"
 #include "Core/PowerPC/CPUCoreBase.h"
 #include "Core/PowerPC/CachedInterpreter/CachedInterpreter.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
-#include "Core/PowerPC/MMU.h"
 #include "Core/PowerPC/PPCSymbolDB.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/PowerPC/Profiler.h"
-#include "Core/System.h"
 
-#if _M_X86_64
+#if _M_X86
 #include "Core/PowerPC/Jit64/Jit.h"
 #endif
 
@@ -40,260 +37,188 @@
 #include "Core/PowerPC/JitArm64/Jit.h"
 #endif
 
-JitInterface::JitInterface(Core::System& system) : m_system(system)
+namespace JitInterface
 {
+void DoState(PointerWrap& p)
+{
+  if (g_jit && p.GetMode() == PointerWrap::MODE_READ)
+    g_jit->ClearCache();
 }
-
-JitInterface::~JitInterface() = default;
-
-void JitInterface::SetJit(std::unique_ptr<JitBase> jit)
+CPUCoreBase* InitJitCore(int core)
 {
-  m_jit = std::move(jit);
-}
-
-void JitInterface::DoState(PointerWrap& p)
-{
-  if (m_jit && p.IsReadMode())
-    m_jit->ClearCache();
-}
-
-CPUCoreBase* JitInterface::InitJitCore(PowerPC::CPUCore core)
-{
+  CPUCoreBase* ptr = nullptr;
   switch (core)
   {
-#if _M_X86_64
-  case PowerPC::CPUCore::JIT64:
-    m_jit = std::make_unique<Jit64>(m_system);
+#if _M_X86
+  case PowerPC::CORE_JIT64:
+    ptr = new Jit64();
     break;
 #endif
 #if _M_ARM_64
-  case PowerPC::CPUCore::JITARM64:
-    m_jit = std::make_unique<JitArm64>(m_system);
+  case PowerPC::CORE_JITARM64:
+    ptr = new JitArm64();
     break;
 #endif
-  case PowerPC::CPUCore::CachedInterpreter:
-    m_jit = std::make_unique<CachedInterpreter>(m_system);
+  case PowerPC::CORE_CACHEDINTERPRETER:
+    ptr = new CachedInterpreter();
     break;
 
   default:
-    // Under this case the caller overrides the CPU core to the default and logs that
-    // it performed the override.
-    m_jit.reset();
+    PanicAlert("Unrecognizable cpu_core: %d", core);
+    g_jit = nullptr;
     return nullptr;
   }
-  m_jit->Init();
-  return m_jit.get();
+  g_jit = static_cast<JitBase*>(ptr);
+  g_jit->Init();
+  return ptr;
 }
 
-CPUCoreBase* JitInterface::GetCore() const
+CPUCoreBase* GetCore()
 {
-  return m_jit.get();
+  return g_jit;
 }
 
-void JitInterface::SetProfilingState(ProfilingState state)
+void WriteProfileResults(const std::string& filename)
 {
-  if (!m_jit)
-    return;
-
-  m_jit->jo.profile_blocks = state == ProfilingState::Enabled;
-}
-
-void JitInterface::UpdateMembase()
-{
-  if (!m_jit)
-    return;
-
-  auto& ppc_state = m_system.GetPPCState();
-  auto& memory = m_system.GetMemory();
-#ifdef _M_ARM_64
-  // JitArm64 is currently using the no fastmem arena code path even when only fastmem is off.
-  const bool fastmem_arena = m_jit->jo.fastmem;
-#else
-  const bool fastmem_arena = m_jit->jo.fastmem_arena;
-#endif
-  if (ppc_state.msr.DR)
-  {
-    ppc_state.mem_ptr =
-        fastmem_arena ? memory.GetLogicalBase() : memory.GetLogicalPageMappingsBase();
-  }
-  else
-  {
-    ppc_state.mem_ptr =
-        fastmem_arena ? memory.GetPhysicalBase() : memory.GetPhysicalPageMappingsBase();
-  }
-}
-
-void JitInterface::WriteProfileResults(const std::string& filename) const
-{
-  Profiler::ProfileStats prof_stats;
+  ProfileStats prof_stats;
   GetProfileResults(&prof_stats);
 
   File::IOFile f(filename, "w");
   if (!f)
   {
-    PanicAlertFmt("Failed to open {}", filename);
+    PanicAlert("Failed to open %s", filename.c_str());
     return;
   }
-  f.WriteString("origAddr\tblkName\trunCount\tcost\ttimeCost\tpercent\ttimePercent\tOvAllinBlkTime("
-                "ms)\tblkCodeSize\n");
+  fprintf(f.GetHandle(), "origAddr\tblkName\trunCount\tcost\ttimeCost\tpercent\ttimePercent\tOvAlli"
+                         "nBlkTime(ms)\tblkCodeSize\n");
   for (auto& stat : prof_stats.block_stats)
   {
     std::string name = g_symbolDB.GetDescription(stat.addr);
     double percent = 100.0 * (double)stat.cost / (double)prof_stats.cost_sum;
     double timePercent = 100.0 * (double)stat.tick_counter / (double)prof_stats.timecost_sum;
-    f.WriteString(fmt::format("{0:08x}\t{1}\t{2}\t{3}\t{4}\t{5:.2f}\t{6:.2f}\t{7:.2f}\t{8}\n",
-                              stat.addr, name, stat.run_count, stat.cost, stat.tick_counter,
-                              percent, timePercent,
-                              static_cast<double>(stat.tick_counter) * 1000.0 /
-                                  static_cast<double>(prof_stats.countsPerSec),
-                              stat.block_size));
+    fprintf(f.GetHandle(),
+            "%08x\t%s\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64 "\t%.2f\t%.2f\t%.2f\t%i\n", stat.addr,
+            name.c_str(), stat.run_count, stat.cost, stat.tick_counter, percent, timePercent,
+            (double)stat.tick_counter * 1000.0 / (double)prof_stats.countsPerSec, stat.block_size);
   }
 }
 
-void JitInterface::GetProfileResults(Profiler::ProfileStats* prof_stats) const
+void GetProfileResults(ProfileStats* prof_stats)
 {
-  // Can't really do this with no m_jit core available
-  if (!m_jit)
+  // Can't really do this with no g_jit core available
+  if (!g_jit)
     return;
 
   prof_stats->cost_sum = 0;
   prof_stats->timecost_sum = 0;
   prof_stats->block_stats.clear();
 
-  Core::RunAsCPUThread([this, &prof_stats] {
-    QueryPerformanceFrequency((LARGE_INTEGER*)&prof_stats->countsPerSec);
-    m_jit->GetBlockCache()->RunOnBlocks([&prof_stats](const JitBlock& block) {
-      const auto& data = block.profile_data;
-      u64 cost = data.downcountCounter;
-      u64 timecost = data.ticCounter;
-      // Todo: tweak.
-      if (data.runCount >= 1)
-        prof_stats->block_stats.emplace_back(block.effectiveAddress, cost, timecost, data.runCount,
-                                             block.codeSize);
-      prof_stats->cost_sum += cost;
-      prof_stats->timecost_sum += timecost;
-    });
+  Core::State old_state = Core::GetState();
+  if (old_state == Core::State::Running)
+    Core::SetState(Core::State::Paused);
 
-    sort(prof_stats->block_stats.begin(), prof_stats->block_stats.end());
+  QueryPerformanceFrequency((LARGE_INTEGER*)&prof_stats->countsPerSec);
+  g_jit->GetBlockCache()->RunOnBlocks([&prof_stats](const JitBlock& block) {
+    const auto& data = block.profile_data;
+    u64 cost = data.downcountCounter;
+    u64 timecost = data.ticCounter;
+    // Todo: tweak.
+    if (data.runCount >= 1)
+      prof_stats->block_stats.emplace_back(block.effectiveAddress, cost, timecost, data.runCount,
+                                           block.codeSize);
+    prof_stats->cost_sum += cost;
+    prof_stats->timecost_sum += timecost;
   });
+
+  sort(prof_stats->block_stats.begin(), prof_stats->block_stats.end());
+  if (old_state == Core::State::Running)
+    Core::SetState(Core::State::Running);
 }
 
-std::variant<JitInterface::GetHostCodeError, JitInterface::GetHostCodeResult>
-JitInterface::GetHostCode(u32 address) const
+int GetHostCode(u32* address, const u8** code, u32* code_size)
 {
-  if (!m_jit)
+  if (!g_jit)
   {
-    return GetHostCodeError::NoJitActive;
+    *code_size = 0;
+    return 1;
   }
 
-  auto& ppc_state = m_system.GetPPCState();
-  JitBlock* block =
-      m_jit->GetBlockCache()->GetBlockFromStartAddress(address, ppc_state.feature_flags);
+  JitBlock* block = g_jit->GetBlockCache()->GetBlockFromStartAddress(*address, MSR);
   if (!block)
   {
     for (int i = 0; i < 500; i++)
     {
-      block = m_jit->GetBlockCache()->GetBlockFromStartAddress(address - 4 * i,
-                                                               ppc_state.feature_flags);
+      block = g_jit->GetBlockCache()->GetBlockFromStartAddress(*address - 4 * i, MSR);
       if (block)
         break;
     }
 
     if (block)
     {
-      if (!(block->effectiveAddress <= address &&
-            block->originalSize + block->effectiveAddress >= address))
+      if (!(block->effectiveAddress <= *address &&
+            block->originalSize + block->effectiveAddress >= *address))
         block = nullptr;
     }
 
-    // Do not merge this "if" with the above - block changes inside it.
+    // Do not merge this "if" with the above - block_num changes inside it.
     if (!block)
     {
-      return GetHostCodeError::NoTranslation;
+      *code_size = 0;
+      return 2;
     }
   }
 
-  GetHostCodeResult result;
-  result.code = block->normalEntry;
-  result.code_size = block->codeSize;
-  result.entry_address = block->effectiveAddress;
-  return result;
+  *code = block->checkedEntry;
+  *code_size = block->codeSize;
+  *address = block->effectiveAddress;
+  return 0;
 }
 
-bool JitInterface::HandleFault(uintptr_t access_address, SContext* ctx)
+bool HandleFault(uintptr_t access_address, SContext* ctx)
 {
   // Prevent nullptr dereference on a crash with no JIT present
-  if (!m_jit)
+  if (!g_jit)
   {
     return false;
   }
 
-  return m_jit->HandleFault(access_address, ctx);
+  return g_jit->HandleFault(access_address, ctx);
 }
 
-bool JitInterface::HandleStackFault()
+bool HandleStackFault()
 {
-  if (!m_jit)
+  if (!g_jit)
   {
     return false;
   }
 
-  return m_jit->HandleStackFault();
+  return g_jit->HandleStackFault();
 }
 
-void JitInterface::ClearCache()
+void ClearCache()
 {
-  if (m_jit)
-    m_jit->ClearCache();
+  if (g_jit)
+    g_jit->ClearCache();
+}
+void ClearSafe()
+{
+  // This clear is "safe" in the sense that it's okay to run from
+  // inside a JIT'ed block: it clears the instruction cache, but not
+  // the JIT'ed code.
+  // TODO: There's probably a better way to handle this situation.
+  if (g_jit)
+    g_jit->GetBlockCache()->Clear();
 }
 
-void JitInterface::ClearSafe()
+void InvalidateICache(u32 address, u32 size, bool forced)
 {
-  if (m_jit)
-    m_jit->GetBlockCache()->Clear();
+  if (g_jit)
+    g_jit->GetBlockCache()->InvalidateICache(address, size, forced);
 }
 
-void JitInterface::InvalidateICache(u32 address, u32 size, bool forced)
+void CompileExceptionCheck(ExceptionType type)
 {
-  if (m_jit)
-    m_jit->GetBlockCache()->InvalidateICache(address, size, forced);
-}
-
-void JitInterface::InvalidateICacheLine(u32 address)
-{
-  if (m_jit)
-    m_jit->GetBlockCache()->InvalidateICacheLine(address);
-}
-
-void JitInterface::InvalidateICacheLines(u32 address, u32 count)
-{
-  // This corresponds to a PPC code loop that:
-  // - calls some form of dcb* instruction on 'address'
-  // - increments 'address' by the size of a cache line (0x20 bytes)
-  // - decrements 'count' by 1
-  // - jumps back to the dcb* instruction if 'count' != 0
-  // with an extra optimization for the case of a single cache line invalidation
-  if (count == 1)
-    InvalidateICacheLine(address);
-  else if (count == 0 || count >= static_cast<u32>(0x1'0000'0000 / 32))
-    InvalidateICache(address & ~0x1f, 0xffffffff, false);
-  else
-    InvalidateICache(address & ~0x1f, 32 * count, false);
-}
-
-void JitInterface::InvalidateICacheLineFromJIT(JitInterface& jit_interface, u32 address)
-{
-  jit_interface.InvalidateICacheLine(address);
-}
-
-void JitInterface::InvalidateICacheLinesFromJIT(JitInterface& jit_interface, u32 address, u32 count)
-{
-  jit_interface.InvalidateICacheLines(address, count);
-}
-
-void JitInterface::CompileExceptionCheck(ExceptionType type)
-{
-  if (!m_jit)
+  if (!g_jit)
     return;
 
   std::unordered_set<u32>* exception_addresses = nullptr;
@@ -301,49 +226,40 @@ void JitInterface::CompileExceptionCheck(ExceptionType type)
   switch (type)
   {
   case ExceptionType::FIFOWrite:
-    exception_addresses = &m_jit->js.fifoWriteAddresses;
+    exception_addresses = &g_jit->js.fifoWriteAddresses;
     break;
   case ExceptionType::PairedQuantize:
-    exception_addresses = &m_jit->js.pairedQuantizeAddresses;
+    exception_addresses = &g_jit->js.pairedQuantizeAddresses;
     break;
   case ExceptionType::SpeculativeConstants:
-    exception_addresses = &m_jit->js.noSpeculativeConstantsAddresses;
+    exception_addresses = &g_jit->js.noSpeculativeConstantsAddresses;
     break;
   }
 
-  auto& ppc_state = m_system.GetPPCState();
-  if (ppc_state.pc != 0 &&
-      (exception_addresses->find(ppc_state.pc)) == (exception_addresses->end()))
+  if (PC != 0 && (exception_addresses->find(PC)) == (exception_addresses->end()))
   {
     if (type == ExceptionType::FIFOWrite)
     {
-      ASSERT(Core::IsCPUThread());
-      Core::CPUThreadGuard guard(m_system);
-
       // Check in case the code has been replaced since: do we need to do this?
-      const OpType optype =
-          PPCTables::GetOpInfo(PowerPC::MMU::HostRead_U32(guard, ppc_state.pc), ppc_state.pc)->type;
-      if (optype != OpType::Store && optype != OpType::StoreFP && optype != OpType::StorePS)
+      int optype = GetOpInfo(PowerPC::HostRead_U32(PC))->type;
+      if (optype != OPTYPE_STORE && optype != OPTYPE_STOREFP && (optype != OPTYPE_STOREPS))
         return;
     }
-    exception_addresses->insert(ppc_state.pc);
+    exception_addresses->insert(PC);
 
     // Invalidate the JIT block so that it gets recompiled with the external exception check
     // included.
-    m_jit->GetBlockCache()->InvalidateICache(ppc_state.pc, 4, true);
+    g_jit->GetBlockCache()->InvalidateICache(PC, 4, true);
   }
 }
 
-void JitInterface::CompileExceptionCheckFromJIT(JitInterface& jit_interface, ExceptionType type)
+void Shutdown()
 {
-  jit_interface.CompileExceptionCheck(type);
-}
-
-void JitInterface::Shutdown()
-{
-  if (m_jit)
+  if (g_jit)
   {
-    m_jit->Shutdown();
-    m_jit.reset();
+    g_jit->Shutdown();
+    delete g_jit;
+    g_jit = nullptr;
   }
+}
 }

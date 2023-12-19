@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/PowerPC/Jit64Common/ConstantPool.h"
 
@@ -45,7 +46,7 @@ const void* ConstantPool::GetConstant(const void* value, size_t element_size, si
   if (iter == m_const_info.end())
   {
     void* ptr = std::align(ALIGNMENT, value_size, m_current_ptr, m_remaining_size);
-    ASSERT_MSG(DYNA_REC, ptr, "Constant pool has run out of space.");
+    _assert_msg_(DYNA_REC, ptr, "Constant pool has run out of space.");
 
     m_current_ptr = static_cast<u8*>(m_current_ptr) + value_size;
     m_remaining_size -= value_size;
@@ -55,7 +56,8 @@ const void* ConstantPool::GetConstant(const void* value, size_t element_size, si
   }
 
   const ConstantInfo& info = iter->second;
-  ASSERT_MSG(DYNA_REC, info.m_size == value_size, "Constant has incorrect size in constant pool.");
+  _assert_msg_(DYNA_REC, info.m_size == value_size,
+               "Constant has incorrect size in constant pool.");
   u8* location = static_cast<u8*>(info.m_location);
   return location + element_size * index;
 }

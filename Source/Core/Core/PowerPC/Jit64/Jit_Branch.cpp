@@ -1,18 +1,17 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/PowerPC/Jit64/Jit.h"
-
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
 #include "Common/x64Emitter.h"
 #include "Core/CoreTiming.h"
 #include "Core/PowerPC/Gekko.h"
-#include "Core/PowerPC/Jit64/RegCache/JitRegCache.h"
+#include "Core/PowerPC/Jit64/JitRegCache.h"
 #include "Core/PowerPC/Jit64Common/Jit64PowerPCState.h"
 #include "Core/PowerPC/PPCAnalyst.h"
 #include "Core/PowerPC/PowerPC.h"
-#include "Core/System.h"
 
 // The branches are known good, or at least reasonably good.
 // No need for a disable-mechanism.
@@ -47,7 +46,6 @@ void Jit64::rfi(UGeckoInstruction inst)
 
   gpr.Flush();
   fpr.Flush();
-
   // See Interpreter rfi for details
   const u32 mask = 0x87C0FFFF;
   const u32 clearMSR13 = 0xFFFBFFFF;  // Mask used to clear the bit MSR[13]
@@ -56,11 +54,6 @@ void Jit64::rfi(UGeckoInstruction inst)
   MOV(32, R(RSCRATCH), PPCSTATE_SRR1);
   AND(32, R(RSCRATCH), Imm32(mask & clearMSR13));
   OR(32, PPCSTATE(msr), R(RSCRATCH));
-
-  // Call MSRUpdated to update feature_flags. Only the bits that come from SRR1
-  // are relevant for this, so it's fine to pass in RSCRATCH in place of msr.
-  MSRUpdated(R(RSCRATCH), RSCRATCH2);
-
   // NPC = SRR0;
   MOV(32, R(RSCRATCH), PPCSTATE_SRR0);
   WriteRfiExitDestInRSCRATCH();
@@ -94,18 +87,25 @@ void Jit64::bx(UGeckoInstruction inst)
   gpr.Flush();
   fpr.Flush();
 
+  u32 destination;
+  if (inst.AA)
+    destination = SignExt26(inst.LI << 2);
+  else
+    destination = js.compilerPC + SignExt26(inst.LI << 2);
 #ifdef ACID_TEST
   if (inst.LK)
     AND(32, PPCSTATE(cr), Imm32(~(0xFF000000)));
 #endif
-  if (js.op->branchIsIdleLoop)
+  if (destination == js.compilerPC)
   {
-    WriteIdleExit(js.op->branchTo);
+    ABI_PushRegistersAndAdjustStack({}, 0);
+    ABI_CallFunction(CoreTiming::Idle);
+    ABI_PopRegistersAndAdjustStack({}, 0);
+    MOV(32, PPCSTATE(pc), Imm32(destination));
+    WriteExceptionExit();
+    return;
   }
-  else
-  {
-    WriteExit(js.op->branchTo, inst.LK, js.compilerPC + 4);
-  }
+  WriteExit(destination, inst.LK, js.compilerPC + 4);
 }
 
 // TODO - optimize to hell and beyond
@@ -123,9 +123,9 @@ void Jit64::bcx(UGeckoInstruction inst)
   {
     SUB(32, PPCSTATE_CTR, Imm8(1));
     if (inst.BO & BO_BRANCH_IF_CTR_0)
-      pCTRDontBranch = J_CC(CC_NZ, Jump::Near);
+      pCTRDontBranch = J_CC(CC_NZ, true);
     else
-      pCTRDontBranch = J_CC(CC_Z, Jump::Near);
+      pCTRDontBranch = J_CC(CC_Z, true);
   }
 
   FixupBranch pConditionDontBranch;
@@ -154,21 +154,15 @@ void Jit64::bcx(UGeckoInstruction inst)
     return;
   }
 
-  {
-    RCForkGuard gpr_guard = gpr.Fork();
-    RCForkGuard fpr_guard = fpr.Fork();
-    gpr.Flush();
-    fpr.Flush();
+  u32 destination;
+  if (inst.AA)
+    destination = SignExt16(inst.BD << 2);
+  else
+    destination = js.compilerPC + SignExt16(inst.BD << 2);
 
-    if (js.op->branchIsIdleLoop)
-    {
-      WriteIdleExit(js.op->branchTo);
-    }
-    else
-    {
-      WriteExit(js.op->branchTo, inst.LK, js.compilerPC + 4);
-    }
-  }
+  gpr.Flush(RegCache::FlushMode::MaintainState);
+  fpr.Flush(RegCache::FlushMode::MaintainState);
+  WriteExit(destination, inst.LK, js.compilerPC + 4);
 
   if ((inst.BO & BO_DONT_CHECK_CONDITION) == 0)
     SetJumpTarget(pConditionDontBranch);
@@ -189,7 +183,7 @@ void Jit64::bcctrx(UGeckoInstruction inst)
   JITDISABLE(bJITBranchOff);
 
   // bcctrx doesn't decrement and/or test CTR
-  DEBUG_ASSERT_MSG(POWERPC, inst.BO_2 & BO_DONT_DECREMENT_FLAG,
+  _dbg_assert_msg_(POWERPC, inst.BO_2 & BO_DONT_DECREMENT_FLAG,
                    "bcctrx with decrement and test CTR option is invalid!");
 
   if (inst.BO_2 & BO_DONT_CHECK_CONDITION)
@@ -221,14 +215,10 @@ void Jit64::bcctrx(UGeckoInstruction inst)
     if (inst.LK_3)
       MOV(32, PPCSTATE_LR, Imm32(js.compilerPC + 4));  // LR = PC + 4;
 
-    {
-      RCForkGuard gpr_guard = gpr.Fork();
-      RCForkGuard fpr_guard = fpr.Fork();
-      gpr.Flush();
-      fpr.Flush();
-      WriteExitDestInRSCRATCH(inst.LK_3, js.compilerPC + 4);
-      // Would really like to continue the block here, but it ends. TODO.
-    }
+    gpr.Flush(RegCache::FlushMode::MaintainState);
+    fpr.Flush(RegCache::FlushMode::MaintainState);
+    WriteExitDestInRSCRATCH(inst.LK_3, js.compilerPC + 4);
+    // Would really like to continue the block here, but it ends. TODO.
     SetJumpTarget(b);
 
     if (!analyzer.HasOption(PPCAnalyst::PPCAnalyzer::OPTION_CONDITIONAL_CONTINUE))
@@ -250,9 +240,9 @@ void Jit64::bclrx(UGeckoInstruction inst)
   {
     SUB(32, PPCSTATE_CTR, Imm8(1));
     if (inst.BO & BO_BRANCH_IF_CTR_0)
-      pCTRDontBranch = J_CC(CC_NZ, Jump::Near);
+      pCTRDontBranch = J_CC(CC_NZ, true);
     else
-      pCTRDontBranch = J_CC(CC_Z, Jump::Near);
+      pCTRDontBranch = J_CC(CC_Z, true);
   }
 
   FixupBranch pConditionDontBranch;
@@ -279,21 +269,9 @@ void Jit64::bclrx(UGeckoInstruction inst)
   if (inst.LK)
     MOV(32, PPCSTATE_LR, Imm32(js.compilerPC + 4));
 
-  {
-    RCForkGuard gpr_guard = gpr.Fork();
-    RCForkGuard fpr_guard = fpr.Fork();
-    gpr.Flush();
-    fpr.Flush();
-
-    if (js.op->branchIsIdleLoop)
-    {
-      WriteIdleExit(js.op->branchTo);
-    }
-    else
-    {
-      WriteBLRExit();
-    }
-  }
+  gpr.Flush(RegCache::FlushMode::MaintainState);
+  fpr.Flush(RegCache::FlushMode::MaintainState);
+  WriteBLRExit();
 
   if ((inst.BO & BO_DONT_CHECK_CONDITION) == 0)
     SetJumpTarget(pConditionDontBranch);

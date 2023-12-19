@@ -1,29 +1,58 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project>
-  <Import Project="..\..\VSProps\Base.Macros.props" />
-  <Import Project="$(VSPropsDir)Base.Targets.props" />
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{41279555-F94F-4EBC-99DE-AF863C10C5C4}</ProjectGuid>
+    <WindowsTargetPlatformVersion Condition="'$(VisualStudioVersion)' == '15.0'">10.0.15063.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-  <Import Project="$(VSPropsDir)Configuration.Utility.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Utility</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset Condition="'$(VisualStudioVersion)' == '12.0'">v120</PlatformToolset>
+    <PlatformToolset Condition="'$(VisualStudioVersion)' == '14.0'">v140</PlatformToolset>
+    <PlatformToolset Condition="'$(VisualStudioVersion)' == '15.0'">v141</PlatformToolset>
+  </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$(VSPropsDir)Base.props" />
+    <Import Project="..\..\VSProps\Base.props" />
   </ImportGroup>
-  <Target Name="GenerateScmRevHeader" BeforeTargets="BuildGenerateSources" Outputs="scmrev.h">
-    <Exec Command="$(CScript) /nologo /E:JScript make_scmrev.h.js" />
-  </Target>
+  <PropertyGroup Label="UserMacros">
+    <CScript Condition="'$(ProgramFiles(x86))' != ''">%windir%\System32\cscript</CScript>
+    <CScript Condition="'$(ProgramFiles(x86))' == ''">%windir%\Sysnative\cscript</CScript>
+  </PropertyGroup>
+  <!--
+    OutDir is always created, which is annoying for SCMRevGen as it doesn't really have an outdir.
+    Here it's redirected to some other place to hide the annoyance.
+    -->
+  <PropertyGroup>
+    <OutDir>$(BuildRootDir)</OutDir>
+  </PropertyGroup>
   <!--
     DisableFastUpToDateCheck bypasses Visual Studio's build manager and forces MSBuild to be run
-    on the project. This is only needed for VS-initiated builds, not msbuild itself.
+    on the project. This allows our PreBuildEvent to be run by MSBuild even if VS thinks things
+    are up-to-date.
    -->
   <PropertyGroup>
     <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
   </PropertyGroup>
+  <ItemDefinitionGroup>
+    <PreBuildEvent>
+      <Command>"$(CScript)" /nologo /E:JScript "make_scmrev.h.js"</Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="make_scmrev.h.js" />
   </ItemGroup>

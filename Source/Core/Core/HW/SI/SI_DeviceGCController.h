@@ -1,9 +1,8 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
-
-#include <array>
 
 #include "Core/HW/GCPad.h"
 #include "Core/HW/SI/SI_Device.h"
@@ -14,6 +13,16 @@ namespace SerialInterface
 class CSIDevice_GCController : public ISIDevice
 {
 protected:
+  // Commands
+  enum EBufferCommands
+  {
+    CMD_RESET = 0x00,
+    CMD_DIRECT = 0x40,
+    CMD_ORIGIN = 0x41,
+    CMD_RECALIBRATE = 0x42,
+    CMD_ID = 0xff,
+  };
+
   struct SOrigin
   {
     u16 button;
@@ -25,6 +34,27 @@ protected:
     u8 trigger_right;
     u8 unk_4;
     u8 unk_5;
+    u8 unk_6;
+    u8 unk_7;
+  };
+
+  enum EDirectCommands
+  {
+    CMD_WRITE = 0x40
+  };
+
+  union UCommand
+  {
+    u32 hex = 0;
+    struct
+    {
+      u32 parameter1 : 8;
+      u32 parameter2 : 8;
+      u32 command : 8;
+      u32 : 8;
+    };
+    UCommand() = default;
+    UCommand(u32 value) : hex{value} {}
   };
 
   enum EButtonCombo
@@ -35,9 +65,10 @@ protected:
   };
 
   // struct to compare input against
-  // Set on connection to perfect neutral values
-  // (standard pad only) Set on button combo to current input state
-  SOrigin m_origin = {};
+  // Set on connection and (standard pad only) on button combo
+  SOrigin m_origin;
+
+  bool m_calibrated = false;
 
   // PADAnalogMode
   // Dunno if we need to do this, game/lib should set it?
@@ -48,15 +79,19 @@ protected:
   //   Technically, the above is only on standard pad, wavebird does not support it for example
   // b, x, start for 3 seconds triggers reset (PI reset button interrupt)
   u64 m_timer_button_combo_start = 0;
+  u64 m_timer_button_combo = 0;
   // Type of button combo from the last/current poll
   EButtonCombo m_last_button_combo = COMBO_NONE;
 
+  // Set this if we want to simulate the "TaruKonga" DK Bongo controller
+  bool m_simulate_konga = false;
+
 public:
   // Constructor
-  CSIDevice_GCController(Core::System& system, SIDevices device, int device_number);
+  CSIDevice_GCController(SIDevices device, int device_number);
 
   // Run the SI Buffer
-  int RunBuffer(u8* buffer, int request_length) override;
+  int RunBuffer(u8* buffer, int length) override;
 
   // Return true on new data
   bool GetData(u32& hi, u32& low) override;
@@ -76,24 +111,21 @@ public:
   static int NetPlay_InGamePadToLocalPad(int pad_num);
 
   // Direct rumble to the right GC Controller
-  static void Rumble(int pad_num, ControlState strength, SIDevices device);
-
-  static void HandleMoviePadStatus(int device_number, GCPadStatus* pad_status);
+  static void Rumble(int pad_num, ControlState strength);
 
 protected:
-  void SetOrigin(const GCPadStatus& pad_status);
+  void Calibrate();
+  void HandleMoviePadStatus(GCPadStatus* pad_status);
 };
 
 // "TaruKonga", the DK Bongo controller
-class CSIDevice_TaruKonga final : public CSIDevice_GCController
+class CSIDevice_TaruKonga : public CSIDevice_GCController
 {
 public:
-  CSIDevice_TaruKonga(Core::System& system, SIDevices device, int device_number);
-
-  bool GetData(u32& hi, u32& low) override;
-
-  static const u32 HI_BUTTON_MASK =
-      (PAD_BUTTON_A | PAD_BUTTON_B | PAD_BUTTON_X | PAD_BUTTON_Y | PAD_BUTTON_START | PAD_TRIGGER_R)
-      << 16;
+  CSIDevice_TaruKonga(SIDevices device, int device_number)
+      : CSIDevice_GCController(device, device_number)
+  {
+    m_simulate_konga = true;
+  }
 };
 }  // namespace SerialInterface

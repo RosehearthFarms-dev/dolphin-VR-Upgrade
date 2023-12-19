@@ -1,12 +1,15 @@
 // Copyright 2010 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include "InputCommon/ControllerInterface/CoreDevice.h"
+#include "InputCommon/ControllerInterface/Device.h"
 #include "InputCommon/ControllerInterface/ForceFeedback/ForceFeedbackDevice.h"
 
-namespace ciface::DInput
+namespace ciface
+{
+namespace DInput
 {
 void InitJoystick(IDirectInput8* const idi8, HWND hwnd);
 
@@ -64,15 +67,13 @@ public:
 
   std::string GetName() const override;
   std::string GetSource() const override;
-  int GetSortPriority() const override { return -3; }
-
-  bool IsValid() const final override;
 
 private:
   const LPDIRECTINPUTDEVICE8 m_device;
 
-  DIJOYSTATE m_state_in{};
+  DIJOYSTATE m_state_in;
 
   bool m_buffered;
 };
-}  // namespace ciface::DInput
+}
+}

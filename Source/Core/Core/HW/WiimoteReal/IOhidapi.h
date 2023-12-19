@@ -1,5 +1,6 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -16,7 +17,6 @@ public:
   explicit WiimoteHidapi(const std::string& device_path);
   ~WiimoteHidapi() override;
   std::string GetId() const override { return m_device_path; }
-
 protected:
   bool ConnectInternal() override;
   void DisconnectInternal() override;
@@ -37,10 +37,9 @@ public:
   ~WiimoteScannerHidapi();
   bool IsReady() const override;
   void FindWiimotes(std::vector<Wiimote*>&, Wiimote*&) override;
-  void Update() override {}                // not needed for hidapi
-  void RequestStopSearching() override {}  // not needed for hidapi
+  void Update() override {}  // not needed for hidapi
 };
-}  // namespace WiimoteReal
+}
 
 #else
 #include "Core/HW/WiimoteReal/IODummy.h"

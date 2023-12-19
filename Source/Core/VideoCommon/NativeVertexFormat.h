@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -7,10 +8,10 @@
 #include <functional>  // for hash
 
 #include "Common/CommonTypes.h"
-#include "VideoCommon/CPMemory.h"
+#include "Common/Hash.h"
 
 // m_components
-enum : u32
+enum
 {
   VB_HAS_POSMTXIDX = (1 << 1),
   VB_HAS_TEXMTXIDX0 = (1 << 2),
@@ -24,9 +25,10 @@ enum : u32
   VB_HAS_TEXMTXIDXALL = (0xff << 2),
 
   // VB_HAS_POS=0, // Implied, it always has pos! don't bother testing
-  VB_HAS_NORMAL = (1 << 10),
-  VB_HAS_TANGENT = (1 << 11),
-  VB_HAS_BINORMAL = (1 << 12),
+  VB_HAS_NRM0 = (1 << 10),
+  VB_HAS_NRM1 = (1 << 11),
+  VB_HAS_NRM2 = (1 << 12),
+  VB_HAS_NRMALL = (7 << 10),
 
   VB_COL_SHIFT = 13,
   VB_HAS_COL0 = (1 << 13),
@@ -44,9 +46,18 @@ enum : u32
   VB_HAS_UVTEXMTXSHIFT = 13,
 };
 
+enum VarType
+{
+  VAR_UNSIGNED_BYTE,   // GX_U8  = 0
+  VAR_BYTE,            // GX_S8  = 1
+  VAR_UNSIGNED_SHORT,  // GX_U16 = 2
+  VAR_SHORT,           // GX_S16 = 3
+  VAR_FLOAT,           // GX_F32 = 4
+};
+
 struct AttributeFormat
 {
-  ComponentFormat type;
+  VarType type;
   int components;
   int offset;
   bool enable;
@@ -58,13 +69,10 @@ struct PortableVertexDeclaration
   int stride;
 
   AttributeFormat position;
-  std::array<AttributeFormat, 3> normals;
-  std::array<AttributeFormat, 2> colors;
-  std::array<AttributeFormat, 8> texcoords;
+  AttributeFormat normals[3];
+  AttributeFormat colors[2];
+  AttributeFormat texcoords[8];
   AttributeFormat posmtx;
-
-  // Make sure we initialize padding to 0 since padding is included in the == memcmp
-  PortableVertexDeclaration() { memset(this, 0, sizeof(*this)); }
 
   inline bool operator<(const PortableVertexDeclaration& b) const
   {
@@ -76,47 +84,17 @@ struct PortableVertexDeclaration
   }
 };
 
-static_assert(std::is_trivially_copyable_v<PortableVertexDeclaration>,
-              "Make sure we can memset-initialize");
-
 namespace std
 {
 template <>
 struct hash<PortableVertexDeclaration>
 {
-  // Implementation from Wikipedia.
-  template <typename T>
-  u32 Fletcher32(const T& data) const
+  size_t operator()(const PortableVertexDeclaration& decl) const
   {
-    static_assert(sizeof(T) % sizeof(u16) == 0);
-
-    auto buf = reinterpret_cast<const u16*>(&data);
-    size_t len = sizeof(T) / sizeof(u16);
-    u32 sum1 = 0xffff, sum2 = 0xffff;
-
-    while (len)
-    {
-      size_t tlen = len > 360 ? 360 : len;
-      len -= tlen;
-
-      do
-      {
-        sum1 += *buf++;
-        sum2 += sum1;
-      } while (--tlen);
-
-      sum1 = (sum1 & 0xffff) + (sum1 >> 16);
-      sum2 = (sum2 & 0xffff) + (sum2 >> 16);
-    }
-
-    // Second reduction step to reduce sums to 16 bits
-    sum1 = (sum1 & 0xffff) + (sum1 >> 16);
-    sum2 = (sum2 & 0xffff) + (sum2 >> 16);
-    return (sum2 << 16 | sum1);
+    return HashFletcher((u8*)&decl, sizeof(decl));
   }
-  size_t operator()(const PortableVertexDeclaration& decl) const { return Fletcher32(decl); }
 };
-}  // namespace std
+}
 
 // The implementation of this class is specific for GL/DX, so NativeVertexFormat.cpp
 // is in the respective backend, not here in VideoCommon.
@@ -126,17 +104,16 @@ struct hash<PortableVertexDeclaration>
 class NativeVertexFormat
 {
 public:
-  NativeVertexFormat(const PortableVertexDeclaration& vtx_decl) : m_decl(vtx_decl) {}
   virtual ~NativeVertexFormat() {}
-
   NativeVertexFormat(const NativeVertexFormat&) = delete;
   NativeVertexFormat& operator=(const NativeVertexFormat&) = delete;
   NativeVertexFormat(NativeVertexFormat&&) = default;
   NativeVertexFormat& operator=(NativeVertexFormat&&) = default;
 
-  u32 GetVertexStride() const { return m_decl.stride; }
-  const PortableVertexDeclaration& GetVertexDeclaration() const { return m_decl; }
-
+  u32 GetVertexStride() const { return vtx_decl.stride; }
+  const PortableVertexDeclaration& GetVertexDeclaration() const { return vtx_decl; }
 protected:
-  PortableVertexDeclaration m_decl;
+  // Let subclasses construct.
+  NativeVertexFormat() {}
+  PortableVertexDeclaration vtx_decl;
 };

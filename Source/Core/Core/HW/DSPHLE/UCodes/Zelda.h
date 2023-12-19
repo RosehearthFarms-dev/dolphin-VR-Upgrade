@@ -1,15 +1,18 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include <algorithm>
 #include <array>
 
 #include "Common/CommonTypes.h"
+#include "Common/MathUtil.h"
 #include "Core/HW/DSPHLE/UCodes/UCodes.h"
 
-namespace DSP::HLE
+namespace DSP
+{
+namespace HLE
 {
 class DSPHLE;
 
@@ -51,7 +54,7 @@ private:
       s32 tmp = (u32)(*buf)[i] * (u32)vol;
       tmp >>= 16 - B;
 
-      (*buf)[i] = (s16)std::clamp(tmp, -0x8000, 0x7FFF);
+      (*buf)[i] = (s16)MathUtil::Clamp(tmp, -0x8000, 0x7FFF);
     }
   }
   template <size_t N>
@@ -93,7 +96,7 @@ private:
     while (count--)
     {
       s32 vol_src = ((s32)*src++ * (s32)vol) >> 15;
-      *dst++ += std::clamp(vol_src, -0x8000, 0x7FFF);
+      *dst++ += MathUtil::Clamp(vol_src, -0x8000, 0x7FFF);
     }
   }
 
@@ -154,9 +157,11 @@ private:
   // Coefficients used for resampling.
   std::array<s16, 0x100> m_resampling_coeffs{};
 
-  // On the Wii, base address of the MRAM or ExRAM region replacing ARAM.
+  // If non zero, base MRAM address for sound data transfers from ARAM. On
+  // the Wii, this points to some MRAM location since there is no ARAM to be
+  // used. If zero, use the top of ARAM.
   u32 m_aram_base_addr = 0;
-  void* GetARAMPtr(u32 offset) const;
+  void* GetARAMPtr() const;
 
   // Downloads PCM encoded samples from ARAM. Handles looping and other
   // parameters appropriately.
@@ -185,10 +190,11 @@ private:
   u32 m_reverb_pb_base_addr = 0;
 };
 
-class ZeldaUCode final : public UCodeInterface
+class ZeldaUCode : public UCodeInterface
 {
 public:
   ZeldaUCode(DSPHLE* dsphle, u32 crc);
+  virtual ~ZeldaUCode();
 
   void Initialize() override;
   void HandleMail(u32 mail) override;
@@ -280,4 +286,5 @@ private:
   // Main object handling audio rendering logic and state.
   ZeldaAudioRenderer m_renderer;
 };
-}  // namespace DSP::HLE
+}  // namespace HLE
+}  // namespace DSP

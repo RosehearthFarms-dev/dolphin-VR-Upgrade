@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -8,11 +9,6 @@
 
 #include "Common/CommonTypes.h"
 #include "Core/PowerPC/SignatureDB/SignatureDB.h"
-
-namespace Core
-{
-class CPUThreadGuard;
-}
 
 class PPCSymbolDB;
 
@@ -51,11 +47,10 @@ public:
   bool Save(const std::string& file_path) const override;
   void List() const override;
 
-  void Apply(const Core::CPUThreadGuard& guard, PPCSymbolDB* symbol_db) const override;
+  void Apply(PPCSymbolDB* symbol_db) const override;
   void Populate(const PPCSymbolDB* func_db, const std::string& filter = "") override;
 
-  bool Add(const Core::CPUThreadGuard& guard, u32 startAddr, u32 size,
-           const std::string& name) override;
+  bool Add(u32 startAddr, u32 size, const std::string& name) override;
 
 private:
   std::vector<MEGASignature> m_signatures;

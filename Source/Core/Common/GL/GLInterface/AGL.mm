@@ -1,26 +1,25 @@
 // Copyright 2012 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Common/GL/GLInterface/AGL.h"
 #include "Common/Logging/Log.h"
-
-// UpdateCachedDimensions and AttachContextToView contain calls to UI APIs, so they must only be
-// called from the main thread or they risk crashing!
 
 static bool UpdateCachedDimensions(NSView* view, u32* width, u32* height)
 {
   NSWindow* window = [view window];
   NSSize size = [view frame].size;
 
-  const CGFloat scale = [window backingScaleFactor];
-  u32 new_width = static_cast<u32>(size.width * scale);
-  u32 new_height = static_cast<u32>(size.height * scale);
+  float scale = [window backingScaleFactor];
+  size.width *= scale;
+  size.height *= scale;
 
-  if (*width == new_width && *height == new_height)
+  if (*width == size.width && *height == size.height)
     return false;
 
-  *width = new_width;
-  *height = new_height;
+  *width = size.width;
+  *height = size.height;
+
   return true;
 }
 
@@ -32,44 +31,27 @@ static bool AttachContextToView(NSOpenGLContext* context, NSView* view, u32* wid
   NSWindow* window = [view window];
   if (window == nil)
   {
-    ERROR_LOG_FMT(VIDEO, "failed to get NSWindow");
+    ERROR_LOG(VIDEO, "failed to get NSWindow");
     return false;
   }
 
   (void)UpdateCachedDimensions(view, width, height);
 
+  [window makeFirstResponder:view];
   [context setView:view];
+  [window makeKeyAndOrderFront:nil];
 
   return true;
 }
 
-GLContextAGL::~GLContextAGL()
-{
-  if ([NSOpenGLContext currentContext] == m_context)
-    [NSOpenGLContext clearCurrentContext];
-
-  if (m_context)
-  {
-    [m_context clearDrawable];
-    [m_context release];
-  }
-  if (m_pixel_format)
-    [m_pixel_format release];
-}
-
-bool GLContextAGL::IsHeadless() const
-{
-  return !m_view;
-}
-
-void GLContextAGL::Swap()
+void cInterfaceAGL::Swap()
 {
   [m_context flushBuffer];
 }
 
 // Create rendering window.
 // Call browser: Core.cpp:EmuThread() > main.cpp:Video_Initialize()
-bool GLContextAGL::Initialize(const WindowSystemInfo& wsi, bool stereo, bool core)
+bool cInterfaceAGL::Create(void* window_handle, bool stereo, bool core)
 {
   NSOpenGLPixelFormatAttribute attr[] = {
       NSOpenGLPFADoubleBuffer,
@@ -81,88 +63,80 @@ bool GLContextAGL::Initialize(const WindowSystemInfo& wsi, bool stereo, bool cor
   m_pixel_format = [[NSOpenGLPixelFormat alloc] initWithAttributes:attr];
   if (m_pixel_format == nil)
   {
-    ERROR_LOG_FMT(VIDEO, "failed to create pixel format");
+    ERROR_LOG(VIDEO, "failed to create pixel format");
     return false;
   }
 
   m_context = [[NSOpenGLContext alloc] initWithFormat:m_pixel_format shareContext:nil];
   if (m_context == nil)
   {
-    ERROR_LOG_FMT(VIDEO, "failed to create context");
+    ERROR_LOG(VIDEO, "failed to create context");
     return false;
   }
 
-  if (!wsi.render_surface)
+  if (!window_handle)
     return true;
 
-  m_view = static_cast<NSView*>(wsi.render_surface);
-  m_opengl_mode = Mode::OpenGL;
+  m_view = static_cast<NSView*>(window_handle);
+  return AttachContextToView(m_context, m_view, &s_backbuffer_width, &s_backbuffer_height);
+}
 
-  __block bool success;
-  if ([NSThread isMainThread])
-  {
-    success = AttachContextToView(m_context, m_view, &m_backbuffer_width, &m_backbuffer_height);
-  }
-  else
-  {
-    dispatch_sync(dispatch_get_main_queue(), ^{
-      success = AttachContextToView(m_context, m_view, &m_backbuffer_width, &m_backbuffer_height);
-    });
-  }
+bool cInterfaceAGL::Create(cInterfaceBase* main_context)
+{
+  cInterfaceAGL* agl_context = static_cast<cInterfaceAGL*>(main_context);
+  NSOpenGLPixelFormat* pixel_format = agl_context->m_pixel_format;
+  NSOpenGLContext* share_context = agl_context->m_context;
 
-  if (!success)
+  m_context = [[NSOpenGLContext alloc] initWithFormat:pixel_format shareContext:share_context];
+  if (m_context == nil)
   {
+    ERROR_LOG(VIDEO, "failed to create shared context");
     return false;
   }
 
-  [m_context makeCurrentContext];
   return true;
 }
 
-std::unique_ptr<GLContext> GLContextAGL::CreateSharedContext()
+std::unique_ptr<cInterfaceBase> cInterfaceAGL::CreateSharedContext()
 {
-  NSOpenGLContext* new_agl_context = [[NSOpenGLContext alloc] initWithFormat:m_pixel_format
-                                                                shareContext:m_context];
-  if (new_agl_context == nil)
-  {
-    ERROR_LOG_FMT(VIDEO, "failed to create shared context");
+  std::unique_ptr<cInterfaceBase> context = std::make_unique<cInterfaceAGL>();
+  if (!context->Create(this))
     return nullptr;
-  }
-
-  std::unique_ptr<GLContextAGL> new_context = std::make_unique<GLContextAGL>();
-  new_context->m_context = new_agl_context;
-  new_context->m_pixel_format = m_pixel_format;
-  [new_context->m_pixel_format retain];
-  new_context->m_is_shared = true;
-  return new_context;
+  return context;
 }
 
-bool GLContextAGL::MakeCurrent()
+bool cInterfaceAGL::MakeCurrent()
 {
   [m_context makeCurrentContext];
   return true;
 }
 
-bool GLContextAGL::ClearCurrent()
+bool cInterfaceAGL::ClearCurrent()
 {
   [NSOpenGLContext clearCurrentContext];
   return true;
 }
 
-void GLContextAGL::Update()
+// Close backend
+void cInterfaceAGL::Shutdown()
+{
+  [m_context clearDrawable];
+  [m_context release];
+  m_context = nil;
+  [m_pixel_format release];
+  m_pixel_format = nil;
+}
+
+void cInterfaceAGL::Update()
 {
   if (!m_view)
     return;
 
-  dispatch_sync(dispatch_get_main_queue(), ^{
-    if (UpdateCachedDimensions(m_view, &m_backbuffer_width, &m_backbuffer_height))
-    {
-      [m_context update];
-    }
-  });
+  if (UpdateCachedDimensions(m_view, &s_backbuffer_width, &s_backbuffer_height))
+    [m_context update];
 }
 
-void GLContextAGL::SwapInterval(int interval)
+void cInterfaceAGL::SwapInterval(int interval)
 {
   [m_context setValues:static_cast<GLint*>(&interval) forParameter:NSOpenGLCPSwapInterval];
 }

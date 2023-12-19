@@ -1,43 +1,52 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
+#include <cstddef>
 #include <memory>
+#include <string>
 
+#include "Common/CommonPaths.h"
 #include "Common/CommonTypes.h"
+#include "Common/FileUtil.h"
 #include "Common/MsgHandler.h"
+#include "Common/NandPaths.h"
 
 #include "Core/Boot/Boot.h"
 #include "Core/CommonTitles.h"
 #include "Core/IOS/ES/ES.h"
 #include "Core/IOS/ES/Formats.h"
+#include "Core/IOS/FS/FileIO.h"
 #include "Core/IOS/IOS.h"
-#include "Core/IOS/IOSC.h"
+#include "Core/HideObjectEngine.h"
 #include "Core/WiiUtils.h"
-#include "DiscIO/VolumeWad.h"
 
-bool CBoot::BootNANDTitle(Core::System& system, const u64 title_id)
+#include "DiscIO/WiiWad.h"
+
+bool CBoot::BootNANDTitle(const u64 title_id)
 {
   UpdateStateFlags([](StateFlags* state) {
-    state->type = 0x04;  // TYPE_NANDBOOT
+    state->type = 0x03;  // TYPE_RETURN
   });
 
-  auto es = IOS::HLE::GetIOS()->GetESDevice();
-  const IOS::ES::TicketReader ticket = es->GetCore().FindSignedTicket(title_id);
-  auto console_type = IOS::HLE::IOSC::ConsoleType::Retail;
-  if (ticket.IsValid())
-    console_type = ticket.GetConsoleType();
-  else
-    ERROR_LOG_FMT(BOOT, "No ticket was found for {:016x}", title_id);
-  SetupWiiMemory(system, console_type);
-  return es->LaunchTitle(title_id);
+  if (title_id == Titles::SYSTEM_MENU)
+    IOS::HLE::CreateVirtualFATFilesystem();
+
+  SetupWiiMemory();
+  auto* ios = IOS::HLE::GetIOS();
+  return ios->GetES()->LaunchTitle(title_id);
 }
 
-bool CBoot::Boot_WiiWAD(Core::System& system, const DiscIO::VolumeWAD& wad)
+bool CBoot::Boot_WiiWAD(const DiscIO::WiiWAD& wad)
 {
   if (!WiiUtils::InstallWAD(*IOS::HLE::GetIOS(), wad, WiiUtils::InstallType::Temporary))
   {
-    PanicAlertFmtT("Cannot boot this WAD because it could not be installed to the NAND.");
+    PanicAlertT("Cannot boot this WAD because it could not be installed to the NAND.");
     return false;
   }
-  return BootNANDTitle(system, wad.GetTMD().GetTitleId());
+
+  HideObjectEngine::LoadHideObjects();
+  HideObjectEngine::ApplyFrameHideObjects();
+
+  return BootNANDTitle(wad.GetTMD().GetTitleId());
 }

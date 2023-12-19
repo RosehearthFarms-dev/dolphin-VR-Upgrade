@@ -1,39 +1,42 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <windows.h>
 #include <string>
-#include "Common/GL/GLContext.h"
+#include "Common/GL/GLInterfaceBase.h"
 
-class GLContextWGL final : public GLContext
+class cInterfaceWGL : public cInterfaceBase
 {
 public:
-  ~GLContextWGL();
-
-  bool IsHeadless() const;
-
-  std::unique_ptr<GLContext> CreateSharedContext() override;
-
+  void SwapInterval(int interval) override;
+  void Swap() override;
+  void* GetFuncAddress(const std::string& name) override;
+  bool Create(void* window_handle, bool stereo, bool core) override;
+  bool Create(cInterfaceBase* main_context) override;
+  bool CreateOffscreen() override;
   bool MakeCurrent() override;
   bool ClearCurrent() override;
+  bool MakeCurrentOffscreen() override;
+  bool ClearCurrentOffscreen() override;
+  void Shutdown() override;
+  void ShutdownOffscreen() override;
 
   void Update() override;
+  bool PeekMessages() override;
 
-  void Swap() override;
-  void SwapInterval(int interval) override;
+  std::unique_ptr<cInterfaceBase> CreateSharedContext() override;
 
-  void* GetFuncAddress(const std::string& name) override;
-
-protected:
-  bool Initialize(const WindowSystemInfo& wsi, bool stereo, bool core) override;
-
+private:
   static HGLRC CreateCoreContext(HDC dc, HGLRC share_context);
   static bool CreatePBuffer(HDC onscreen_dc, int width, int height, HANDLE* pbuffer_handle,
                             HDC* pbuffer_dc);
 
+public:
   HWND m_window_handle = nullptr;
+  HWND m_offscreen_window_handle = nullptr;
   HANDLE m_pbuffer_handle = nullptr;
   HDC m_dc = nullptr;
   HGLRC m_rc = nullptr;

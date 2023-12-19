@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -22,6 +23,10 @@ public:
   // keep things as simple as possible, and just queue real work onto something else.
   std::function<void(const LdrDllLoadEvent&)> action;
   void* cookie{};
+  LdrObserver(std::vector<std::wstring> m, std::function<void(const LdrDllLoadEvent&)> a)
+      : module_names(m), action(a)
+  {
+  }
 };
 
 class LdrWatcher

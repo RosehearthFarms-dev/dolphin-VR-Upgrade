@@ -1,5 +1,6 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -19,15 +20,21 @@ public:
   SWVertexLoader();
   ~SWVertexLoader();
 
-  DataReader PrepareForAdditionalData(OpcodeDecoder::Primitive primitive, u32 count, u32 stride,
-                                      bool cullall) override;
+  std::unique_ptr<NativeVertexFormat>
+  CreateNativeVertexFormat(const PortableVertexDeclaration& vdec) override;
 
-protected:
-  void DrawCurrentBatch(u32 base_index, u32 num_indices, u32 base_vertex) override;
+private:
+  void ResetBuffer(u32 stride) override;
+  void vFlush() override;
 
-  void SetFormat();
+  void SetFormat(u8 attributeIndex, u8 primitiveType);
   void ParseVertex(const PortableVertexDeclaration& vdec, int index);
 
-  InputVertexData m_vertex{};
+  std::vector<u8> m_local_vertex_buffer;
+  std::vector<u16> m_local_index_buffer;
+
+  InputVertexData m_vertex;
   SetupUnit m_setup_unit;
+
+  bool m_tex_gen_special_case;
 };

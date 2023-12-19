@@ -1,5 +1,6 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/DSP/DSPCodeUtil.h"
 
@@ -8,13 +9,9 @@
 #include <string>
 #include <vector>
 
-#include <fmt/format.h>
-
 #include "Common/CommonTypes.h"
+#include "Common/File.h"
 #include "Common/FileUtil.h"
-#include "Common/IOFile.h"
-#include "Common/Logging/Log.h"
-#include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
 #include "Common/Swap.h"
 
@@ -35,7 +32,13 @@ bool Assemble(const std::string& text, std::vector<u16>& code, bool force)
 
   // TODO: fix the terrible api of the assembler.
   DSPAssembler assembler(settings);
-  return assembler.Assemble(text, code);
+  if (!assembler.Assemble(text, code))
+  {
+    std::cerr << assembler.GetErrorString() << std::endl;
+    return false;
+  }
+
+  return true;
 }
 
 bool Disassemble(const std::vector<u16>& code, bool line_numbers, std::string& text)
@@ -57,18 +60,16 @@ bool Disassemble(const std::vector<u16>& code, bool line_numbers, std::string& t
   return success;
 }
 
-// NOTE: This code is called from DSPTool and UnitTests, which do not use the logging system.
-// Thus, fmt::print is used instead of the log system.
 bool Compare(const std::vector<u16>& code1, const std::vector<u16>& code2)
 {
   if (code1.size() != code2.size())
-    fmt::print("Size difference! 1={} 2={}\n", code1.size(), code2.size());
+    printf("Size difference! 1=%zu 2=%zu\n", code1.size(), code2.size());
   u32 count_equal = 0;
-  const u16 min_size = static_cast<u16>(std::min(code1.size(), code2.size()));
+  const int min_size = std::min<int>((int)code1.size(), (int)code2.size());
 
   AssemblerSettings settings;
   DSPDisassembler disassembler(settings);
-  for (u16 i = 0; i < min_size; i++)
+  for (int i = 0; i < min_size; i++)
   {
     if (code1[i] == code2[i])
     {
@@ -78,101 +79,77 @@ bool Compare(const std::vector<u16>& code1, const std::vector<u16>& code2)
     {
       std::string line1, line2;
       u16 pc = i;
-      disassembler.DisassembleOpcode(code1, &pc, line1);
+      disassembler.DisassembleOpcode(&code1[0], &pc, line1);
       pc = i;
-      disassembler.DisassembleOpcode(code2, &pc, line2);
-      fmt::print("!! {:04x} : {:04x} vs {:04x} - {}  vs  {}\n", i, code1[i], code2[i], line1,
-                 line2);
-
-      // Also do a comparison one word back if the previous word corresponded to an instruction with
-      // a large immediate. (Compare operates on individual words, so both the main word and the
-      // immediate following it are compared separately; we don't use DisassembleOpcode's ability to
-      // increment pc by 2 for two-word instructions because code1 may have a 1-word instruction
-      // where code2 has a 2-word instruction.)
-      if (i >= 1 && code1[i - 1] == code2[i - 1])
-      {
-        const DSPOPCTemplate* opc = FindOpInfoByOpcode(code1[i - 1]);
-        if (opc != nullptr && opc->size == 2)
-        {
-          line1.clear();
-          line2.clear();
-          pc = i - 1;
-          disassembler.DisassembleOpcode(code1, &pc, line1);
-          pc = i - 1;
-          disassembler.DisassembleOpcode(code2, &pc, line2);
-          fmt::print("   (or {:04x} : {:04x} {:04x} vs {:04x} {:04x} - {}  vs  {})\n", i - 1,
-                     code1[i - 1], code1[i], code2[i - 1], code2[i], line1, line2);
-        }
-      }
+      disassembler.DisassembleOpcode(&code2[0], &pc, line2);
+      printf("!! %04x : %04x vs %04x - %s  vs  %s\n", i, code1[i], code2[i], line1.c_str(),
+             line2.c_str());
     }
   }
   if (code2.size() != code1.size())
   {
-    fmt::print("Extra code words:\n");
+    printf("Extra code words:\n");
     const std::vector<u16>& longest = code1.size() > code2.size() ? code1 : code2;
-    for (u16 i = min_size; i < longest.size(); i++)
+    for (int i = min_size; i < (int)longest.size(); i++)
     {
       u16 pc = i;
       std::string line;
-      disassembler.DisassembleOpcode(longest, &pc, line);
-      fmt::print("!! {:04x} : {:04x} - {}\n", i, longest[i], line);
+      disassembler.DisassembleOpcode(&longest[0], &pc, line);
+      printf("!! %s\n", line.c_str());
     }
   }
-  fmt::print("Equal instruction words: {} / {}\n", count_equal, min_size);
+  printf("Equal instruction words: %i / %i\n", count_equal, min_size);
   return code1.size() == code2.size() && code1.size() == count_equal;
 }
 
-std::string CodeToBinaryStringBE(const std::vector<u16>& code)
+void CodeToBinaryStringBE(const std::vector<u16>& code, std::string& str)
 {
-  std::string str(code.size() * 2, '\0');
-
+  str.resize(code.size() * 2);
   for (size_t i = 0; i < code.size(); i++)
   {
     str[i * 2 + 0] = code[i] >> 8;
     str[i * 2 + 1] = code[i] & 0xff;
   }
-
-  return str;
 }
 
-std::vector<u16> BinaryStringBEToCode(const std::string& str)
+void BinaryStringBEToCode(const std::string& str, std::vector<u16>& code)
 {
-  std::vector<u16> code(str.size() / 2);
-
+  code.resize(str.size() / 2);
   for (size_t i = 0; i < code.size(); i++)
   {
     code[i] = ((u16)(u8)str[i * 2 + 0] << 8) | ((u16)(u8)str[i * 2 + 1]);
   }
-
-  return code;
 }
 
-std::optional<std::vector<u16>> LoadBinary(const std::string& filename)
+bool LoadBinary(const std::string& filename, std::vector<u16>& code)
 {
   std::string buffer;
   if (!File::ReadFileToString(filename, buffer))
-    return std::nullopt;
+    return false;
 
-  return std::make_optional(BinaryStringBEToCode(buffer));
+  BinaryStringBEToCode(buffer, code);
+  return true;
 }
 
 bool SaveBinary(const std::vector<u16>& code, const std::string& filename)
 {
-  const std::string buffer = CodeToBinaryStringBE(code);
-
-  return File::WriteStringToFile(filename, buffer);
+  std::string buffer;
+  CodeToBinaryStringBE(code, buffer);
+  if (!File::WriteStringToFile(buffer, filename))
+    return false;
+  return true;
 }
 
-bool DumpDSPCode(const u8* code_be, size_t size_in_bytes, u32 crc)
+bool DumpDSPCode(const u8* code_be, int size_in_bytes, u32 crc)
 {
   const std::string root_name =
-      File::GetUserPath(D_DUMPDSP_IDX) + fmt::format("DSP_UC_{:08X}", crc);
+      File::GetUserPath(D_DUMPDSP_IDX) + StringFromFormat("DSP_UC_%08X", crc);
   const std::string binary_file = root_name + ".bin";
   const std::string text_file = root_name + ".txt";
 
   if (!File::IOFile(binary_file, "wb").WriteBytes(code_be, size_in_bytes))
   {
-    PanicAlertFmt("Can't dump UCode to file '{}'!!", binary_file);
+    PanicAlert("Can't dump UCode to file '%s'!!", binary_file.c_str());
     return false;
   }
 
@@ -185,7 +162,7 @@ bool DumpDSPCode(const u8* code_be, size_t size_in_bytes, u32 crc)
   if (!Disassemble(code, true, text))
     return false;
 
-  return File::WriteStringToFile(text_file, text);
+  return File::WriteStringToFile(text, text_file);
 }
 
 }  // namespace DSP

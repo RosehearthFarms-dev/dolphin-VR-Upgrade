@@ -1,18 +1,17 @@
 // Copyright 2013 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
-#ifdef HAVE_OPENSL_ES
-#include "AudioCommon/OpenSLESStream.h"
-
-#include <cmath>
+#ifdef ANDROID
+#include <assert.h>
 
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
 
+#include "AudioCommon/OpenSLESStream.h"
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
-#include "Core/ConfigManager.h"
 
 // engine interfaces
 static SLObjectItf engineObject;
@@ -23,6 +22,7 @@ static SLObjectItf outputMixObject;
 static SLObjectItf bqPlayerObject = nullptr;
 static SLPlayItf bqPlayerPlay;
 static SLAndroidSimpleBufferQueueItf bqPlayerBufferQueue;
+static SLMuteSoloItf bqPlayerMuteSolo;
 static SLVolumeItf bqPlayerVolume;
 static Mixer* g_mixer;
 #define BUFFER_SIZE 512
@@ -34,8 +34,8 @@ static int curBuffer = 0;
 
 static void bqPlayerCallback(SLAndroidSimpleBufferQueueItf bq, void* context)
 {
-  ASSERT(bq == bqPlayerBufferQueue);
-  ASSERT(nullptr == context);
+  assert(bq == bqPlayerBufferQueue);
+  assert(nullptr == context);
 
   // Render to the fresh buffer
   g_mixer->Mix(reinterpret_cast<short*>(buffer[curBuffer]), BUFFER_SIZE_IN_SAMPLES);
@@ -46,23 +46,23 @@ static void bqPlayerCallback(SLAndroidSimpleBufferQueueItf bq, void* context)
   // Comment from sample code:
   // the most likely other result is SL_RESULT_BUFFER_INSUFFICIENT,
   // which for this code example would indicate a programming error
-  ASSERT_MSG(AUDIO, SL_RESULT_SUCCESS == result, "Couldn't enqueue audio stream.");
+  _assert_msg_(AUDIO, SL_RESULT_SUCCESS == result, "Couldn't enqueue audio stream.");
 }
 
-bool OpenSLESStream::Init()
+bool OpenSLESStream::Start()
 {
   SLresult result;
   // create engine
   result = slCreateEngine(&engineObject, 0, nullptr, 0, nullptr, nullptr);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
   result = (*engineObject)->Realize(engineObject, SL_BOOLEAN_FALSE);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
   result = (*engineObject)->GetInterface(engineObject, SL_IID_ENGINE, &engineEngine);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
   result = (*engineEngine)->CreateOutputMix(engineEngine, &outputMixObject, 0, 0, 0);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
   result = (*outputMixObject)->Realize(outputMixObject, SL_BOOLEAN_FALSE);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
 
   SLDataLocator_AndroidSimpleBufferQueue loc_bufq = {SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 2};
   SLDataFormat_PCM format_pcm = {SL_DATAFORMAT_PCM,
@@ -85,21 +85,19 @@ bool OpenSLESStream::Init()
   result =
       (*engineEngine)
           ->CreateAudioPlayer(engineEngine, &bqPlayerObject, &audioSrc, &audioSnk, 2, ids, req);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
 
   result = (*bqPlayerObject)->Realize(bqPlayerObject, SL_BOOLEAN_FALSE);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
   result = (*bqPlayerObject)->GetInterface(bqPlayerObject, SL_IID_PLAY, &bqPlayerPlay);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
   result =
       (*bqPlayerObject)->GetInterface(bqPlayerObject, SL_IID_BUFFERQUEUE, &bqPlayerBufferQueue);
-  ASSERT(SL_RESULT_SUCCESS == result);
-  result = (*bqPlayerObject)->GetInterface(bqPlayerObject, SL_IID_VOLUME, &bqPlayerVolume);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
   result = (*bqPlayerBufferQueue)->RegisterCallback(bqPlayerBufferQueue, bqPlayerCallback, nullptr);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
   result = (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PLAYING);
-  ASSERT(SL_RESULT_SUCCESS == result);
+  assert(SL_RESULT_SUCCESS == result);
 
   // Render and enqueue a first buffer.
   curBuffer ^= 1;
@@ -112,7 +110,7 @@ bool OpenSLESStream::Init()
   return true;
 }
 
-OpenSLESStream::~OpenSLESStream()
+void OpenSLESStream::Stop()
 {
   if (bqPlayerObject != nullptr)
   {
@@ -120,6 +118,7 @@ OpenSLESStream::~OpenSLESStream()
     bqPlayerObject = nullptr;
     bqPlayerPlay = nullptr;
     bqPlayerBufferQueue = nullptr;
+    bqPlayerMuteSolo = nullptr;
     bqPlayerVolume = nullptr;
   }
 
@@ -136,11 +135,4 @@ OpenSLESStream::~OpenSLESStream()
     engineEngine = nullptr;
   }
 }
-
-void OpenSLESStream::SetVolume(int volume)
-{
-  const SLmillibel attenuation =
-      volume <= 0 ? SL_MILLIBEL_MIN : static_cast<SLmillibel>(2000 * std::log10(volume / 100.0f));
-  (*bqPlayerVolume)->SetVolumeLevel(bqPlayerVolume, attenuation);
-}
-#endif  // HAVE_OPENSL_ES
+#endif

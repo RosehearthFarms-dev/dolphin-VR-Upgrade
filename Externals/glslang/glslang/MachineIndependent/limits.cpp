@@ -1,11 +1,11 @@
 //
-// Copyright (C) 2013 LunarG, Inc.
+//Copyright (C) 2013 LunarG, Inc.
 //
-// All rights reserved.
+//All rights reserved.
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions
-// are met:
+//Redistribution and use in source and binary forms, with or without
+//modification, are permitted provided that the following conditions
+//are met:
 //
 //    Redistributions of source code must retain the above copyright
 //    notice, this list of conditions and the following disclaimer.
@@ -19,18 +19,18 @@
 //    contributors may be used to endorse or promote products derived
 //    from this software without specific prior written permission.
 //
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-// COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-// BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-// LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-// ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+//THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+//"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+//LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+//FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+//COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+//INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+//BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+//LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+//CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+//LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+//ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+//POSSIBILITY OF SUCH DAMAGE.
 //
 
 //
@@ -63,14 +63,14 @@ namespace glslang {
 
 class TInductiveTraverser : public TIntermTraverser {
 public:
-    TInductiveTraverser(long long id, TSymbolTable& st)
+    TInductiveTraverser(int id, TSymbolTable& st)
     : loopId(id), symbolTable(st), bad(false)  { }
 
     virtual bool visitBinary(TVisit, TIntermBinary* node);
     virtual bool visitUnary(TVisit, TIntermUnary* node);
     virtual bool visitAggregate(TVisit, TIntermAggregate* node);
 
-    long long loopId;           // unique ID of the symbol that's the loop inductive variable
+    int loopId;           // unique ID of the symbol that's the loop inductive variable
     TSymbolTable& symbolTable;
     bool bad;
     TSourceLoc badLoc;
@@ -83,7 +83,7 @@ protected:
 // check binary operations for those modifying the loop index
 bool TInductiveTraverser::visitBinary(TVisit /* visit */, TIntermBinary* node)
 {
-    if (node->modifiesState() && node->getLeft()->getAsSymbolNode() &&
+    if (node->modifiesState() && node->getLeft()->getAsSymbolNode() && 
                                  node->getLeft()->getAsSymbolNode()->getId() == loopId) {
         bad = true;
         badLoc = node->getLoc();
@@ -95,7 +95,7 @@ bool TInductiveTraverser::visitBinary(TVisit /* visit */, TIntermBinary* node)
 // check unary operations for those modifying the loop index
 bool TInductiveTraverser::visitUnary(TVisit /* visit */, TIntermUnary* node)
 {
-    if (node->modifiesState() && node->getOperand()->getAsSymbolNode() &&
+    if (node->modifiesState() && node->getOperand()->getAsSymbolNode() && 
                                  node->getOperand()->getAsSymbolNode()->getId() == loopId) {
         bad = true;
         badLoc = node->getLoc();
@@ -129,7 +129,7 @@ bool TInductiveTraverser::visitAggregate(TVisit /* visit */, TIntermAggregate* n
 //
 // External function to call for loop check.
 //
-void TParseContext::inductiveLoopBodyCheck(TIntermNode* body, long long loopId, TSymbolTable& symbolTable)
+void TParseContext::inductiveLoopBodyCheck(TIntermNode* body, int loopId, TSymbolTable& symbolTable)
 {
     TInductiveTraverser it(loopId, symbolTable);
 
@@ -145,7 +145,7 @@ void TParseContext::inductiveLoopBodyCheck(TIntermNode* body, long long loopId, 
 //
 // The "constant-index-expression" tranverser.
 //
-// Just look at things that can form an index.
+// Just look at things that can form an index.  
 //
 
 class TIndexTraverser : public TIntermTraverser {
@@ -187,14 +187,12 @@ bool TIndexTraverser::visitAggregate(TVisit /* visit */, TIntermAggregate* node)
 //
 void TParseContext::constantIndexExpressionCheck(TIntermNode* index)
 {
-#ifndef GLSLANG_WEB
     TIndexTraverser it(inductiveLoopIds);
 
     index->traverse(&it);
 
     if (it.bad)
         error(it.badLoc, "Non-constant-index-expression", "limitations", "");
-#endif
 }
 
 } // end namespace glslang

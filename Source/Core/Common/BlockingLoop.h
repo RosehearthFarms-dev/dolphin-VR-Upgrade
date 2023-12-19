@@ -1,5 +1,6 @@
 // Copyright 2015 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -21,15 +22,15 @@ namespace Common
 class BlockingLoop
 {
 public:
-  enum class StopMode
+  enum StopMode
   {
-    NonBlock,
-    Block,
-    BlockAndGiveUp,
+    kNonBlock,
+    kBlock,
+    kBlockAndGiveUp,
   };
 
   BlockingLoop() { m_stopped.Set(); }
-  ~BlockingLoop() { Stop(StopMode::BlockAndGiveUp); }
+  ~BlockingLoop() { Stop(kBlockAndGiveUp); }
   // Triggers to rerun the payload of the Run() function at least once again.
   // This function will never block and is designed to finish as fast as possible.
   void Wakeup()
@@ -157,7 +158,6 @@ public:
         // However, if we're not in the STATE_DONE state any more, the event should also be
         // triggered so that we'll skip the next waiting call quite fast.
         m_done_event.Set();
-        [[fallthrough]];
 
       case STATE_DONE:
         // We're done now. So time to check if we want to sleep or if we want to stay in a busy
@@ -173,7 +173,6 @@ public:
           // Busy loop.
           break;
         }
-        [[fallthrough]];
 
       case STATE_SLEEPING:
         // Just relax
@@ -200,7 +199,7 @@ public:
   // Quits the main loop.
   // By default, it will wait until the main loop quits.
   // Be careful to not use the blocking way within the payload of the Run() method.
-  void Stop(StopMode mode = StopMode::Block)
+  void Stop(StopMode mode = kBlock)
   {
     if (m_stopped.IsSet())
       return;
@@ -212,12 +211,12 @@ public:
 
     switch (mode)
     {
-    case StopMode::NonBlock:
+    case kNonBlock:
       break;
-    case StopMode::Block:
+    case kBlock:
       Wait();
       break;
-    case StopMode::BlockAndGiveUp:
+    case kBlockAndGiveUp:
       WaitYield(std::chrono::milliseconds(100), [&] {
         // If timed out, assume no one will come along to call Run, so force a break
         m_stopped.Set();
@@ -231,7 +230,6 @@ public:
   // This function should be triggered regularly over time so
   // that we will fall back from the busy loop to sleeping.
   void AllowSleep() { m_may_sleep.Set(); }
-
 private:
   std::mutex m_wait_lock;
   std::mutex m_prepare_lock;
@@ -254,4 +252,4 @@ private:
   Flag m_may_sleep;  // If this is set, we fall back from the busy loop to an event based
                      // synchronization.
 };
-}  // namespace Common
+}

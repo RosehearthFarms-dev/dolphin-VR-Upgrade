@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -13,7 +14,6 @@
 #include "Common/Lazy.h"
 #include "DiscIO/Filesystem.h"
 #include "DiscIO/Volume.h"
-#include "DiscIO/VolumeDisc.h"
 
 namespace DiscIO
 {
@@ -25,36 +25,37 @@ enum class Language;
 enum class Region;
 enum class Platform;
 
-class VolumeGC : public VolumeDisc
+class VolumeGC : public Volume
 {
 public:
   VolumeGC(std::unique_ptr<BlobReader> reader);
   ~VolumeGC();
-  bool Read(u64 offset, u64 length, u8* buffer,
+  bool Read(u64 _Offset, u64 _Length, u8* _pBuffer,
             const Partition& partition = PARTITION_NONE) const override;
   const FileSystem* GetFileSystem(const Partition& partition = PARTITION_NONE) const override;
-  std::string GetGameTDBID(const Partition& partition = PARTITION_NONE) const override;
+  std::string GetGameID(const Partition& partition = PARTITION_NONE) const override;
+  std::string GetMakerID(const Partition& partition = PARTITION_NONE) const override;
+  std::optional<u16> GetRevision(const Partition& partition = PARTITION_NONE) const override;
+  std::string GetInternalName(const Partition& partition = PARTITION_NONE) const override;
   std::map<Language, std::string> GetShortNames() const override;
   std::map<Language, std::string> GetLongNames() const override;
   std::map<Language, std::string> GetShortMakers() const override;
   std::map<Language, std::string> GetLongMakers() const override;
   std::map<Language, std::string> GetDescriptions() const override;
-  std::vector<u32> GetBanner(u32* width, u32* height) const override;
+  std::vector<u32> GetBanner(int* width, int* height) const override;
+  std::string GetApploaderDate(const Partition& partition = PARTITION_NONE) const override;
+  std::optional<u8> GetDiscNumber(const Partition& partition = PARTITION_NONE) const override;
 
   Platform GetVolumeType() const override;
-  bool IsDatelDisc() const override;
   Region GetRegion() const override;
+  Country GetCountry(const Partition& partition = PARTITION_NONE) const override;
   BlobType GetBlobType() const override;
-  u64 GetDataSize() const override;
-  DataSizeType GetDataSizeType() const override;
+  u64 GetSize() const override;
   u64 GetRawSize() const override;
-  const BlobReader& GetBlobReader() const override;
-
-  std::array<u8, 20> GetSyncHash() const override;
 
 private:
-  static const u32 GC_BANNER_WIDTH = 96;
-  static const u32 GC_BANNER_HEIGHT = 32;
+  static const int GC_BANNER_WIDTH = 96;
+  static const int GC_BANNER_HEIGHT = 32;
 
   struct GCBannerInformation
   {
@@ -88,8 +89,8 @@ private:
     std::map<Language, std::string> descriptions;
 
     std::vector<u32> image_buffer;
-    u32 image_height = 0;
-    u32 image_width = 0;
+    int image_height = 0;
+    int image_width = 0;
   };
 
   ConvertedGCBanner LoadBannerFile() const;
@@ -102,7 +103,7 @@ private:
 
   Common::Lazy<std::unique_ptr<FileSystem>> m_file_system;
 
-  std::unique_ptr<BlobReader> m_reader;
+  std::unique_ptr<BlobReader> m_pReader;
 };
 
-}  // namespace DiscIO
+}  // namespace

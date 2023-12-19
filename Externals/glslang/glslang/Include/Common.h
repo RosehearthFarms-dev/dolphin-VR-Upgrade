@@ -1,12 +1,12 @@
 //
-// Copyright (C) 2002-2005  3Dlabs Inc. Ltd.
-// Copyright (C) 2012-2013 LunarG, Inc.
+//Copyright (C) 2002-2005  3Dlabs Inc. Ltd.
+//Copyright (C) 2012-2013 LunarG, Inc.
 //
-// All rights reserved.
+//All rights reserved.
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions
-// are met:
+//Redistribution and use in source and binary forms, with or without
+//modification, are permitted provided that the following conditions
+//are met:
 //
 //    Redistributions of source code must retain the above copyright
 //    notice, this list of conditions and the following disclaimer.
@@ -20,57 +20,26 @@
 //    contributors may be used to endorse or promote products derived
 //    from this software without specific prior written permission.
 //
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-// COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-// BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-// LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-// ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+//THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+//"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+//LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+//FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+//COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+//INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+//BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+//LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+//CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+//LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+//ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+//POSSIBILITY OF SUCH DAMAGE.
 //
 
 #ifndef _COMMON_INCLUDED_
 #define _COMMON_INCLUDED_
 
-#include <algorithm>
-#include <cassert>
-#ifdef _MSC_VER
-#include <cfloat>
-#else
-#include <cmath>
-#endif
-#include <cstdio>
-#include <cstdlib>
-#include <list>
-#include <map>
-#include <set>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
-
-#if defined(__ANDROID__) || (defined(_MSC_VER) && _MSC_VER < 1700)
-#include <sstream>
-namespace std {
-template<typename T>
-std::string to_string(const T& val) {
-  std::ostringstream os;
-  os << val;
-  return os.str();
-}
-}
-#endif
-
-#if (defined(_MSC_VER) && _MSC_VER < 1900 /*vs2015*/) || MINGW_HAS_SECURE_API
+#if (defined(_MSC_VER) && _MSC_VER < 1900 /*vs2015*/) || defined MINGW_HAS_SECURE_API
     #include <basetsd.h>
-    #ifndef snprintf
     #define snprintf sprintf_s
-    #endif
     #define safe_vsprintf(buf,max,format,args) vsnprintf_s((buf), (max), (max), (format), (args))
 #elif defined (solaris)
     #define safe_vsprintf(buf,max,format,args) vsnprintf((buf), (max), (format), (args))
@@ -82,24 +51,27 @@ std::string to_string(const T& val) {
     #define UINT_PTR uintptr_t
 #endif
 
-#if defined(_MSC_VER) && _MSC_VER < 1800
-    #include <stdlib.h>
-    inline long long int strtoll (const char* str, char** endptr, int base)
-    {
-        return _strtoi64(str, endptr, base);
-    }
-    inline unsigned long long int strtoull (const char* str, char** endptr, int base)
-    {
-        return _strtoui64(str, endptr, base);
-    }
-    inline long long int atoll (const char* str)
-    {
-        return strtoll(str, NULL, 10);
-    }
+#if defined(__ANDROID__) || _MSC_VER < 1700
+#include <sstream>
+namespace std {
+template<typename T>
+std::string to_string(const T& val) {
+  std::ostringstream os;
+  os << val;
+  return os.str();
+}
+}
 #endif
 
-#if defined(_MSC_VER)
-#define strdup _strdup
+#if defined(_MSC_VER) && _MSC_VER < 1700
+inline long long int strtoll (const char* str, char** endptr, int base)
+{
+  return _strtoi64(str, endptr, base); 
+}
+inline long long int atoll (const char* str)
+{
+  return strtoll(str, NULL, 10);
+}
 #endif
 
 /* windows only pragma */
@@ -109,6 +81,17 @@ std::string to_string(const T& val) {
     #pragma warning(disable : 4201) // nameless union
 #endif
 
+#include <set>
+#include <unordered_set>
+#include <vector>
+#include <map>
+#include <unordered_map>
+#include <list>
+#include <algorithm>
+#include <string>
+#include <stdio.h>
+#include <assert.h>
+
 #include "PoolAlloc.h"
 
 //
@@ -116,11 +99,11 @@ std::string to_string(const T& val) {
 //
 #define POOL_ALLOCATOR_NEW_DELETE(A)                                  \
     void* operator new(size_t s) { return (A).allocate(s); }          \
-    void* operator new(size_t, void *_Where) { return (_Where); }     \
+    void* operator new(size_t, void *_Where) { return (_Where);	}     \
     void operator delete(void*) { }                                   \
     void operator delete(void *, void *) { }                          \
     void* operator new[](size_t s) { return (A).allocate(s); }        \
-    void* operator new[](size_t, void *_Where) { return (_Where); }   \
+    void* operator new[](size_t, void *_Where) { return (_Where);	} \
     void operator delete[](void*) { }                                 \
     void operator delete[](void *, void *) { }
 
@@ -164,7 +147,7 @@ inline TString* NewPoolTString(const char* s)
     return new(memory) TString(s);
 }
 
-template<class T> inline T* NewPoolObject(T*)
+template<class T> inline T* NewPoolObject(T)
 {
     return new(GetThreadPoolAllocator().allocate(sizeof(T))) T;
 }
@@ -191,16 +174,12 @@ public:
 template <class T> class TList  : public std::list<T, pool_allocator<T> > {
 };
 
-template <class K, class D, class CMP = std::less<K> >
+template <class K, class D, class CMP = std::less<K> > 
 class TMap : public std::map<K, D, CMP, pool_allocator<std::pair<K const, D> > > {
 };
 
 template <class K, class D, class HASH = std::hash<K>, class PRED = std::equal_to<K> >
 class TUnorderedMap : public std::unordered_map<K, D, HASH, PRED, pool_allocator<std::pair<K const, D> > > {
-};
-
-template <class K, class CMP = std::less<K> >
-class TSet : public std::set<K, CMP, pool_allocator<K> > {
 };
 
 //
@@ -218,58 +197,36 @@ template <class T> T Max(const T a, const T b) { return a > b ? a : b; }
 //
 // Create a TString object from an integer.
 //
-#if defined _MSC_VER || MINGW_HAS_SECURE_API
 inline const TString String(const int i, const int base = 10)
 {
     char text[16];     // 32 bit ints are at most 10 digits in base 10
-    _itoa_s(i, text, sizeof(text), base);
-    return text;
-}
-#else
-inline const TString String(const int i, const int /*base*/ = 10)
-{
-    char text[16];     // 32 bit ints are at most 10 digits in base 10
-
-    // we assume base 10 for all cases
-    snprintf(text, sizeof(text), "%d", i);
+    
+    #if defined _MSC_VER || defined MINGW_HAS_SECURE_API
+        _itoa_s(i, text, sizeof(text), base);
+    #else
+        // we assume base 10 for all cases
+        snprintf(text, sizeof(text), "%d", i);
+    #endif
 
     return text;
 }
-#endif
 
 struct TSourceLoc {
-    void init()
-    {
-        name = nullptr; string = 0; line = 0; column = 0;
-    }
-    void init(int stringNum) { init(); string = stringNum; }
+    void init() { name = nullptr; string = 0; line = 0; column = 0; }
     // Returns the name if it exists. Otherwise, returns the string number.
     std::string getStringNameOrNum(bool quoteStringName = true) const
     {
-        if (name != nullptr) {
-            TString qstr = quoteStringName ? ("\"" + *name + "\"") : *name;
-            std::string ret_str(qstr.c_str());
-            return ret_str;
-        }
+        if (name != nullptr)
+            return quoteStringName ? ("\"" + std::string(name) + "\"") : name;
         return std::to_string((long long)string);
     }
-    const char* getFilename() const
-    {
-        if (name == nullptr)
-            return nullptr;
-        return name->c_str();
-    }
-    const char* getFilenameStr() const { return name == nullptr ? "" : name->c_str(); }
-    TString* name; // descriptive name for this string, when a textual name is available, otherwise nullptr
+    const char* name; // descriptive name for this string
     int string;
     int line;
     int column;
 };
 
-class TPragmaTable : public TMap<TString, TString> {
-public:
-    POOL_ALLOCATOR_NEW_DELETE(GetThreadPoolAllocator())
-};
+typedef TMap<TString, TString> TPragmaTable;
 
 const int MaxTokenLength = 1024;
 
@@ -293,46 +250,6 @@ template <class T> bool IsMultipleOfPow2(T number, int powerOf2)
 {
     assert(IsPow2(powerOf2));
     return ! (number & (powerOf2 - 1));
-}
-
-// Returns log2 of an integer power of 2.
-// T should be integral.
-template <class T> int IntLog2(T n)
-{
-    assert(IsPow2(n));
-    int result = 0;
-    while ((T(1) << result) != n) {
-      result++;
-    }
-    return result;
-}
-
-inline bool IsInfinity(double x) {
-#ifdef _MSC_VER
-    switch (_fpclass(x)) {
-    case _FPCLASS_NINF:
-    case _FPCLASS_PINF:
-        return true;
-    default:
-        return false;
-    }
-#else
-    return std::isinf(x);
-#endif
-}
-
-inline bool IsNan(double x) {
-#ifdef _MSC_VER
-    switch (_fpclass(x)) {
-    case _FPCLASS_SNAN:
-    case _FPCLASS_QNAN:
-        return true;
-    default:
-        return false;
-    }
-#else
-  return std::isnan(x);
-#endif
 }
 
 } // end namespace glslang

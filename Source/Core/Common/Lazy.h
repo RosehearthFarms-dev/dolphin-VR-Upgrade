@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -34,7 +35,6 @@ public:
   const T* operator->() const { return ComputeValue(); }
   T& operator*() { return *ComputeValue(); }
   T* operator->() { return ComputeValue(); }
-
 private:
   T* ComputeValue() const
   {
@@ -45,4 +45,4 @@ private:
 
   mutable std::variant<T, std::function<T()>> m_value;
 };
-}  // namespace Common
+}

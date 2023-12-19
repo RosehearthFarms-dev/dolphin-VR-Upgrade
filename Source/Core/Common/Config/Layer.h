@@ -1,5 +1,6 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -7,18 +8,26 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 #include "Common/Config/ConfigInfo.h"
 #include "Common/Config/Enums.h"
+#include "Common/Logging/Log.h"
 #include "Common/StringUtil.h"
 
 namespace Config
 {
 namespace detail
 {
-template <typename T, std::enable_if_t<!std::is_enum<T>::value>* = nullptr>
+std::string ValueToString(u16 value);
+std::string ValueToString(u32 value);
+std::string ValueToString(float value);
+std::string ValueToString(double value);
+std::string ValueToString(int value);
+std::string ValueToString(bool value);
+std::string ValueToString(const std::string& value);
+
+template <typename T>
 std::optional<T> TryParse(const std::string& str_value)
 {
   T value;
@@ -27,27 +36,18 @@ std::optional<T> TryParse(const std::string& str_value)
   return value;
 }
 
-template <typename T, std::enable_if_t<std::is_enum<T>::value>* = nullptr>
-std::optional<T> TryParse(const std::string& str_value)
-{
-  const auto result = TryParse<std::underlying_type_t<T>>(str_value);
-  if (result)
-    return static_cast<T>(*result);
-  return {};
-}
-
 template <>
 inline std::optional<std::string> TryParse(const std::string& str_value)
 {
   return str_value;
 }
-}  // namespace detail
+}
 
 template <typename T>
-class Info;
+struct ConfigInfo;
 
 class Layer;
-using LayerMap = std::map<Location, std::optional<std::string>>;
+using LayerMap = std::map<ConfigLocation, std::optional<std::string>>;
 
 class ConfigLayerLoader
 {
@@ -70,7 +70,6 @@ public:
   Section(iterator begin_, iterator end_) : m_begin(begin_), m_end(end_) {}
   iterator begin() const { return m_begin; }
   iterator end() const { return m_end; }
-
 private:
   iterator m_begin;
   iterator m_end;
@@ -83,7 +82,6 @@ public:
   ConstSection(iterator begin_, iterator end_) : m_begin(begin_), m_end(end_) {}
   iterator begin() const { return m_begin; }
   iterator end() const { return m_end; }
-
 private:
   iterator m_begin;
   iterator m_end;
@@ -97,48 +95,45 @@ public:
   virtual ~Layer();
 
   // Convenience functions
-  bool Exists(const Location& location) const;
-  bool DeleteKey(const Location& location);
+  bool Exists(const ConfigLocation& location) const;
+  bool DeleteKey(const ConfigLocation& location);
   void DeleteAllKeys();
 
+  bool DeleteSection(System system, const std::string& section_name);
   template <typename T>
-  T Get(const Info<T>& config_info) const
+  T Get(const ConfigInfo<T>& config_info)
   {
-    return Get<T>(config_info.GetLocation()).value_or(config_info.GetDefaultValue());
+    return Get<T>(config_info.location).value_or(config_info.default_value);
   }
 
   template <typename T>
-  std::optional<T> Get(const Location& location) const
+  std::optional<T> Get(const ConfigLocation& location)
   {
-    const auto iter = m_map.find(location);
-    if (iter == m_map.end() || !iter->second.has_value())
+    const std::optional<std::string>& str_value = m_map[location];
+    if (!str_value)
       return std::nullopt;
-    return detail::TryParse<T>(*iter->second);
+    return detail::TryParse<T>(*str_value);
   }
 
   template <typename T>
-  bool Set(const Info<T>& config_info, const std::common_type_t<T>& value)
+  void Set(const ConfigInfo<T>& config_info, const T& value)
   {
-    return Set(config_info.GetLocation(), value);
+    Set<T>(config_info.location, value);
   }
 
   template <typename T>
-  bool Set(const Location& location, const T& value)
+  void Set(const ConfigLocation& location, const T& value)
   {
-    return Set(location, ValueToString(value));
-  }
-
-  bool Set(const Location& location, std::string new_value)
-  {
-    const auto iter = m_map.find(location);
-    if (iter != m_map.end() && iter->second == new_value)
-      return false;
+    const std::string new_value = detail::ValueToString(value);
+    INFO_LOG(CORE, "%s %s.%s.%s=\"%s\"", GetLayerName(m_layer).c_str(),
+             GetSystemName(location.system).c_str(), location.section.c_str(), location.key.c_str(),
+             new_value.c_str());
+    std::optional<std::string>& current_value = m_map[location];
+    if (current_value == new_value)
+      return;
     m_is_dirty = true;
-    m_map.insert_or_assign(location, std::move(new_value));
-    return true;
+    current_value = new_value;
   }
-
-  void MarkAsDirty() { m_is_dirty = true; }
 
   Section GetSection(System system, const std::string& section);
   ConstSection GetSection(System system, const std::string& section) const;
@@ -146,6 +141,8 @@ public:
   // Explicit load and save of layers
   void Load();
   void Save();
+
+  void Clear() { m_map.clear(); }
 
   LayerType GetLayer() const;
   const LayerMap& GetLayerMap() const;
@@ -156,4 +153,4 @@ protected:
   const LayerType m_layer;
   std::unique_ptr<ConfigLayerLoader> m_loader;
 };
-}  // namespace Config
+}

@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // Utilities to manipulate files and formats from the Wii's ES module: tickets,
 // TMD, and other title informations.
@@ -9,12 +10,12 @@
 #include <array>
 #include <cstddef>
 #include <map>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "Common/CommonTypes.h"
+#include "Common/NandPaths.h"
 #include "Core/IOS/Device.h"
 #include "Core/IOS/IOSC.h"
 #include "DiscIO/Enums.h"
@@ -23,11 +24,6 @@ class PointerWrap;
 
 namespace IOS
 {
-namespace HLE::FS
-{
-class FileSystem;
-}
-
 namespace ES
 {
 enum class TitleType : u32
@@ -68,8 +64,6 @@ struct TMDHeader
   u8 tmd_version;
   u8 ca_crl_version;
   u8 signer_crl_version;
-  // This is usually an always 0 padding byte, which is set to 1 on vWii TMDs
-  u8 is_vwii;
   u64 ios_id;
   u64 title_id;
   u32 title_flags;
@@ -87,7 +81,6 @@ struct TMDHeader
   u16 fill2;
 };
 static_assert(sizeof(TMDHeader) == 0x1e4, "TMDHeader has the wrong size");
-static_assert(offsetof(TMDHeader, ios_id) == 0x184);
 
 struct Content
 {
@@ -111,7 +104,7 @@ struct TimeLimit
 
 struct TicketView
 {
-  u8 version;
+  u32 version;
   u64 ticket_id;
   u32 device_id;
   u64 title_id;
@@ -151,33 +144,18 @@ struct Ticket
   TimeLimit time_limits[8];
 };
 static_assert(sizeof(Ticket) == 0x2A4, "Ticket has the wrong size");
-
-struct V1TicketHeader
-{
-  u16 version;
-  u16 header_size;
-  u32 v1_ticket_size;
-  u32 section_header_table_offset;
-  u16 number_of_section_headers;
-  u16 section_header_size;
-  u32 flags;
-};
-static_assert(sizeof(V1TicketHeader) == 0x14, "V1TicketHeader has the wrong size");
 #pragma pack(pop)
-
-constexpr u32 MAX_TMD_SIZE = 0x49e4;
 
 class SignedBlobReader
 {
 public:
   SignedBlobReader() = default;
-  explicit SignedBlobReader(std::vector<u8> bytes);
+  explicit SignedBlobReader(const std::vector<u8>& bytes);
+  explicit SignedBlobReader(std::vector<u8>&& bytes);
 
   const std::vector<u8>& GetBytes() const;
-  void SetBytes(std::vector<u8> bytes);
-
-  /// Get the SHA1 hash for this signed blob (starting at the issuer).
-  std::array<u8, 20> GetSha1() const;
+  void SetBytes(const std::vector<u8>& bytes);
+  void SetBytes(std::vector<u8>&& bytes);
 
   // Only checks whether the signature data could be parsed. The signature is not verified.
   bool IsSignatureValid() const;
@@ -201,7 +179,8 @@ class TMDReader final : public SignedBlobReader
 {
 public:
   TMDReader() = default;
-  explicit TMDReader(std::vector<u8> bytes);
+  explicit TMDReader(const std::vector<u8>& bytes);
+  explicit TMDReader(std::vector<u8>&& bytes);
 
   bool IsValid() const;
 
@@ -214,19 +193,14 @@ public:
   u32 GetTitleFlags() const;
   u16 GetTitleVersion() const;
   u16 GetGroupId() const;
+
+  // Provides a best guess for the region. Might be inaccurate or UNKNOWN_REGION.
   DiscIO::Region GetRegion() const;
-  bool IsvWii() const;
 
   // Constructs a 6-character game ID in the format typically used by Dolphin.
   // If the 6-character game ID would contain unprintable characters,
-  // the title ID converted to 16 hexadecimal digits is returned instead.
+  // the title ID converted to hexadecimal is returned instead.
   std::string GetGameID() const;
-
-  // Constructs a 4-character game ID in the format typically used by GameTDB.
-  // If the 4-character game ID would contain unprintable characters,
-  // the title ID converted to 16 hexadecimal digits is returned instead
-  // (a format which GameTDB does not actually use).
-  std::string GetGameTDBID() const;
 
   u16 GetNumContents() const;
   bool GetContent(u16 index, Content* content) const;
@@ -238,10 +212,10 @@ class TicketReader final : public SignedBlobReader
 {
 public:
   TicketReader() = default;
-  explicit TicketReader(std::vector<u8> bytes);
+  explicit TicketReader(const std::vector<u8>& bytes);
+  explicit TicketReader(std::vector<u8>&& bytes);
 
   bool IsValid() const;
-  bool IsV1Ticket() const;
 
   std::vector<u8> GetRawTicket(u64 ticket_id) const;
   size_t GetNumberOfTickets() const;
@@ -252,19 +226,13 @@ public:
   // more than just one ticket and generate ticket views for them, so we implement it too.
   std::vector<u8> GetRawTicketView(u32 ticket_num) const;
 
-  u8 GetVersion() const;
   u32 GetDeviceId() const;
-  u32 GetTicketSize() const;
   u64 GetTitleId() const;
-  u8 GetCommonKeyIndex() const;
   // Get the decrypted title key.
   std::array<u8, 16> GetTitleKey(const HLE::IOSC& iosc) const;
   // Same as the above version, but guesses the console type depending on the issuer
   // and constructs a temporary IOSC instance.
   std::array<u8, 16> GetTitleKey() const;
-
-  // Infers the console type (retail or devkit) based on the certificate issuer.
-  HLE::IOSC::ConsoleType GetConsoleType() const;
 
   // Deletes a ticket with the given ticket ID from the internal buffer.
   void DeleteTicket(u64 ticket_id);
@@ -273,14 +241,15 @@ public:
   // and has a title key that must be decrypted first.
   HLE::ReturnCode Unpersonalise(HLE::IOSC& iosc);
 
+  // Reset the common key field back to 0 if it's an incorrect value.
   // Intended for use before importing fakesigned tickets, which tend to have a high bogus index.
-  void OverwriteCommonKeyIndex(u8 index);
+  void FixCommonKeyIndex();
 };
 
 class SharedContentMap final
 {
 public:
-  explicit SharedContentMap(HLE::FSCore& fs_core);
+  explicit SharedContentMap(Common::FromWhichRoot root);
   ~SharedContentMap();
 
   std::optional<std::string> GetFilenameFromSHA1(const std::array<u8, 20>& sha1) const;
@@ -288,33 +257,28 @@ public:
   bool DeleteSharedContent(const std::array<u8, 20>& sha1);
   std::vector<std::array<u8, 20>> GetHashes() const;
 
-  u64 GetTicks() const { return m_ticks; }
-
 private:
   bool WriteEntries() const;
 
   struct Entry;
+  Common::FromWhichRoot m_root;
   u32 m_last_id = 0;
+  std::string m_file_path;
   std::vector<Entry> m_entries;
-  std::shared_ptr<HLE::FS::FileSystem> m_fs;
-  u64 m_ticks = 0;
 };
 
 class UIDSys final
 {
 public:
-  explicit UIDSys(HLE::FSCore& fs_core);
+  explicit UIDSys(Common::FromWhichRoot root);
 
   u32 GetUIDFromTitle(u64 title_id) const;
   u32 GetOrInsertUIDForTitle(u64 title_id);
   u32 GetNextUID() const;
 
-  u64 GetTicks() const { return m_ticks; }
-
 private:
-  std::shared_ptr<HLE::FS::FileSystem> m_fs;
+  std::string m_file_path;
   std::map<u32, u64> m_entries;
-  u64 m_ticks = 0;
 };
 
 class CertReader final : public SignedBlobReader

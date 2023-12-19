@@ -1,5 +1,6 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -7,14 +8,6 @@
 
 class PointerWrap;
 
-namespace Core
-{
-class System;
-}
-namespace CoreTiming
-{
-struct EventType;
-}
 namespace MMIO
 {
 class Mapping;
@@ -54,61 +47,36 @@ enum
   PI_FIFO_BASE = 0x0C,
   PI_FIFO_END = 0x10,
   PI_FIFO_WPTR = 0x14,
-  PI_FIFO_RESET = 0x18,  // Used by GXAbortFrame
+  PI_FIFO_RESET = 0x18,  // ??? - GXAbortFrame writes to it
   PI_RESET_CODE = 0x24,
   PI_FLIPPER_REV = 0x2C,
   PI_FLIPPER_UNK = 0x30  // BS1 writes 0x0245248A to it - prolly some bootstrap thing
 };
 
-class ProcessorInterfaceManager
+extern u32 m_InterruptCause;
+extern u32 m_InterruptMask;
+extern u32 Fifo_CPUBase;
+extern u32 Fifo_CPUEnd;
+extern u32 Fifo_CPUWritePointer;
+
+void Init();
+void DoState(PointerWrap& p);
+
+void RegisterMMIO(MMIO::Mapping* mmio, u32 base);
+
+inline u32 GetMask()
 {
-public:
-  explicit ProcessorInterfaceManager(Core::System& system);
-  ProcessorInterfaceManager(const ProcessorInterfaceManager& other) = delete;
-  ProcessorInterfaceManager(ProcessorInterfaceManager&& other) = delete;
-  ProcessorInterfaceManager& operator=(const ProcessorInterfaceManager& other) = delete;
-  ProcessorInterfaceManager& operator=(ProcessorInterfaceManager&& other) = delete;
-  ~ProcessorInterfaceManager();
+  return m_InterruptMask;
+}
+inline u32 GetCause()
+{
+  return m_InterruptCause;
+}
 
-  void Init();
-  void DoState(PointerWrap& p);
+void SetInterrupt(u32 _causemask, bool _bSet = true);
 
-  void RegisterMMIO(MMIO::Mapping* mmio, u32 base);
+// Thread-safe func which sets and clears reset button state automagically
+void ResetButton_Tap();
+void PowerButton_Tap();
 
-  u32 GetMask() const { return m_interrupt_mask; }
-  u32 GetCause() const { return m_interrupt_cause; }
-
-  void SetInterrupt(u32 cause_mask, bool set = true);
-
-  // Thread-safe func which sets and clears reset button state automagically
-  void ResetButton_Tap();
-  void PowerButton_Tap();
-
-  u32 m_interrupt_cause = 0;
-  u32 m_interrupt_mask = 0;
-
-  // addresses for CPU fifo accesses
-  u32 m_fifo_cpu_base = 0;
-  u32 m_fifo_cpu_end = 0;
-  u32 m_fifo_cpu_write_pointer = 0;
-
-private:
-  // Let the PPC know that an external exception is set/cleared
-  void UpdateException();
-
-  void SetResetButton(bool set);
-
-  // ID and callback for scheduling reset button presses/releases
-  static void ToggleResetButtonCallback(Core::System& system, u64 userdata, s64 cyclesLate);
-  static void IOSNotifyResetButtonCallback(Core::System& system, u64 userdata, s64 cyclesLate);
-  static void IOSNotifyPowerButtonCallback(Core::System& system, u64 userdata, s64 cyclesLate);
-
-  CoreTiming::EventType* m_event_type_toggle_reset_button = nullptr;
-  CoreTiming::EventType* m_event_type_ios_notify_reset_button = nullptr;
-  CoreTiming::EventType* m_event_type_ios_notify_power_button = nullptr;
-
-  u32 m_reset_code = 0;
-
-  Core::System& m_system;
-};
 }  // namespace ProcessorInterface

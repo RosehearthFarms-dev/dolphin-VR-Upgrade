@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/PowerPC/Jit64Common/Jit64AsmCommon.h"
 
@@ -7,15 +8,13 @@
 
 #include "Common/CPUDetect.h"
 #include "Common/CommonTypes.h"
-#include "Common/EnumUtils.h"
-#include "Common/FloatUtils.h"
-#include "Common/Intrinsics.h"
 #include "Common/JitRegister.h"
+#include "Common/MathUtil.h"
 #include "Common/x64ABI.h"
 #include "Common/x64Emitter.h"
+#include "Core/HW/GPFifo.h"
 #include "Core/PowerPC/Gekko.h"
-#include "Core/PowerPC/Jit64/Jit.h"
-#include "Core/PowerPC/Jit64Common/Jit64Constants.h"
+#include "Core/PowerPC/Jit64Common/Jit64Base.h"
 #include "Core/PowerPC/Jit64Common/Jit64PowerPCState.h"
 #include "Core/PowerPC/PowerPC.h"
 
@@ -26,92 +25,20 @@
 
 using namespace Gen;
 
-alignas(16) static const __m128i double_fraction = _mm_set_epi64x(0, 0x000fffffffffffff);
-alignas(16) static const __m128i double_sign_bit = _mm_set_epi64x(0, 0x8000000000000000);
-alignas(16) static const __m128i double_explicit_top_bit = _mm_set_epi64x(0, 0x0010000000000000);
-alignas(16) static const __m128i double_top_two_bits = _mm_set_epi64x(0, 0xc000000000000000);
-alignas(16) static const __m128i double_bottom_bits = _mm_set_epi64x(0, 0x07ffffffe0000000);
-
-// Since the following float conversion functions are used in non-arithmetic PPC float
-// instructions, they must convert floats bitexact and never flush denormals to zero or turn SNaNs
-// into QNaNs. This means we can't use CVTSS2SD/CVTSD2SS.
-
-// Another problem is that officially, converting doubles to single format results in undefined
-// behavior.  Relying on undefined behavior is a bug so no software should ever do this.
-// Super Mario 64 (on Wii VC) accidentally relies on this behavior.  See issue #11173
-
-// This is the same algorithm used in the interpreter (and actual hardware)
-// The documentation states that the conversion of a double with an outside the
-// valid range for a single (or a single denormal) is undefined.
-// But testing on actual hardware shows it always picks bits 0..1 and 5..34
-// unless the exponent is in the range of 874 to 896.
-
-void CommonAsmRoutines::GenConvertDoubleToSingle()
+void CommonAsmRoutines::GenFifoWrite(int size)
 {
-  // Input in XMM0, output to RSCRATCH
-  // Clobbers RSCRATCH/RSCRATCH2/XMM0/XMM1
-
   const void* start = GetCodePtr();
 
-  // Grab Exponent
-  MOVQ_xmm(R(RSCRATCH), XMM0);
-  MOV(64, R(RSCRATCH2), R(RSCRATCH));
-  SHR(64, R(RSCRATCH), Imm8(52));
-  AND(16, R(RSCRATCH), Imm16(0x7ff));
-
-  // Check if the double is in the range of valid single subnormal
-  SUB(16, R(RSCRATCH), Imm16(874));
-  CMP(16, R(RSCRATCH), Imm16(896 - 874));
-  FixupBranch Denormalize = J_CC(CC_NA);
-
-  // Don't Denormalize
-
-  if (cpu_info.bBMI2FastParallelBitOps)
-  {
-    // Extract bits 0-1 and 5-34
-    MOV(64, R(RSCRATCH), Imm64(0xc7ffffffe0000000));
-    PEXT(64, RSCRATCH, RSCRATCH2, R(RSCRATCH));
-  }
-  else
-  {
-    // We want bits 0, 1
-    avx_op(&XEmitter::VPAND, &XEmitter::PAND, XMM1, R(XMM0), MConst(double_top_two_bits));
-    PSRLQ(XMM1, 32);
-
-    // And 5 through to 34
-    PAND(XMM0, MConst(double_bottom_bits));
-    PSRLQ(XMM0, 29);
-
-    // OR them togther
-    POR(XMM0, R(XMM1));
-    MOVD_xmm(R(RSCRATCH), XMM0);
-  }
+  // Assume value in RSCRATCH
+  MOV(64, R(RSCRATCH2), ImmPtr(&GPFifo::g_gather_pipe_ptr));
+  MOV(64, R(RSCRATCH2), MatR(RSCRATCH2));
+  SwapAndStore(size, MatR(RSCRATCH2), RSCRATCH);
+  MOV(64, R(RSCRATCH), ImmPtr(&GPFifo::g_gather_pipe_ptr));
+  ADD(64, R(RSCRATCH2), Imm8(size >> 3));
+  MOV(64, MatR(RSCRATCH), R(RSCRATCH2));
   RET();
 
-  // Denormalise
-  SetJumpTarget(Denormalize);
-
-  // shift = (905 - Exponent) plus the 21 bit double to single shift
-  NEG(16, R(RSCRATCH));
-  ADD(16, R(RSCRATCH), Imm16((905 + 21) - 874));
-  MOVQ_xmm(XMM1, R(RSCRATCH));
-
-  // XMM0 = fraction | 0x0010000000000000
-  PAND(XMM0, MConst(double_fraction));
-  POR(XMM0, MConst(double_explicit_top_bit));
-
-  // fraction >> shift
-  PSRLQ(XMM0, R(XMM1));
-  MOVD_xmm(R(RSCRATCH), XMM0);
-
-  // OR the sign bit in.
-  SHR(64, R(RSCRATCH2), Imm8(32));
-  AND(32, R(RSCRATCH2), Imm32(0x80000000));
-
-  OR(32, R(RSCRATCH), R(RSCRATCH2));
-  RET();
-
-  Common::JitRegister::Register(start, GetCodePtr(), "JIT_cdts");
+  JitRegister::Register(start, GetCodePtr(), "JIT_FifoWrite_%i", size);
 }
 
 void CommonAsmRoutines::GenFrsqrte()
@@ -122,14 +49,17 @@ void CommonAsmRoutines::GenFrsqrte()
   // This function clobbers all three RSCRATCH.
   MOVQ_xmm(R(RSCRATCH), XMM0);
 
-  // Extract exponent
+  // Negative and zero inputs set an exception and take the complex path.
+  TEST(64, R(RSCRATCH), R(RSCRATCH));
+  FixupBranch zero = J_CC(CC_Z, true);
+  FixupBranch negative = J_CC(CC_S, true);
   MOV(64, R(RSCRATCH_EXTRA), R(RSCRATCH));
   SHR(64, R(RSCRATCH_EXTRA), Imm8(52));
 
-  // Negatives, zeros, denormals, infinities and NaNs take the complex path.
-  LEA(32, RSCRATCH2, MDisp(RSCRATCH_EXTRA, -1));
-  CMP(32, R(RSCRATCH2), Imm32(0x7FE));
-  FixupBranch complex = J_CC(CC_AE, Jump::Near);
+  // Zero and max exponents (non-normal floats) take the complex path.
+  FixupBranch complex1 = J_CC(CC_Z, true);
+  CMP(32, R(RSCRATCH_EXTRA), Imm32(0x7FF));
+  FixupBranch complex2 = J_CC(CC_E, true);
 
   SUB(32, R(RSCRATCH_EXTRA), Imm32(0x3FD));
   SAR(32, R(RSCRATCH_EXTRA), Imm8(1));
@@ -141,78 +71,51 @@ void CommonAsmRoutines::GenFrsqrte()
   MOV(64, R(RSCRATCH_EXTRA), R(RSCRATCH));
   SHR(64, R(RSCRATCH_EXTRA), Imm8(48));
   AND(32, R(RSCRATCH_EXTRA), Imm8(0x1F));
+  XOR(32, R(RSCRATCH_EXTRA), Imm8(0x10));  // int index = i / 2048 + (odd_exponent ? 16 : 0);
 
   PUSH(RSCRATCH2);
-  MOV(64, R(RSCRATCH2), ImmPtr(GetConstantFromPool(Common::frsqrte_expected)));
-  static_assert(sizeof(Common::BaseAndDec) == 8, "Unable to use SCALE_8; incorrect size");
+  MOV(64, R(RSCRATCH2), ImmPtr(GetConstantFromPool(MathUtil::frsqrte_expected)));
+  static_assert(sizeof(MathUtil::BaseAndDec) == 8, "Unable to use SCALE_8; incorrect size");
 
   SHR(64, R(RSCRATCH), Imm8(37));
   AND(32, R(RSCRATCH), Imm32(0x7FF));
   IMUL(32, RSCRATCH,
-       MComplex(RSCRATCH2, RSCRATCH_EXTRA, SCALE_8, offsetof(Common::BaseAndDec, m_dec)));
-  ADD(32, R(RSCRATCH),
-      MComplex(RSCRATCH2, RSCRATCH_EXTRA, SCALE_8, offsetof(Common::BaseAndDec, m_base)));
-  SHL(64, R(RSCRATCH), Imm8(26));
+       MComplex(RSCRATCH2, RSCRATCH_EXTRA, SCALE_8, offsetof(MathUtil::BaseAndDec, m_dec)));
+  MOV(32, R(RSCRATCH_EXTRA),
+      MComplex(RSCRATCH2, RSCRATCH_EXTRA, SCALE_8, offsetof(MathUtil::BaseAndDec, m_base)));
+  SUB(32, R(RSCRATCH_EXTRA), R(RSCRATCH));
+  SHL(64, R(RSCRATCH_EXTRA), Imm8(26));
 
   POP(RSCRATCH2);
-  OR(64, R(RSCRATCH2), R(RSCRATCH));  // vali |= (s64)(frsqrte_expected_base[index] +
-                                      // frsqrte_expected_dec[index] * (i % 2048)) << 26;
+  OR(64, R(RSCRATCH2), R(RSCRATCH_EXTRA));  // vali |= (s64)(frsqrte_expected_base[index] -
+                                            // frsqrte_expected_dec[index] * (i % 2048)) << 26;
   MOVQ_xmm(XMM0, R(RSCRATCH2));
   RET();
 
-  SetJumpTarget(complex);
-  AND(32, R(RSCRATCH_EXTRA), Imm32(0x7FF));
-  CMP(32, R(RSCRATCH_EXTRA), Imm32(0x7FF));
-  FixupBranch nan_or_inf = J_CC(CC_E);
-
-  MOV(64, R(RSCRATCH2), R(RSCRATCH));
-  SHL(64, R(RSCRATCH2), Imm8(1));
-  FixupBranch nonzero = J_CC(CC_NZ);
-
-  // +0.0 or -0.0
+  // Exception flags for zero input.
+  SetJumpTarget(zero);
   TEST(32, PPCSTATE(fpscr), Imm32(FPSCR_ZX));
   FixupBranch skip_set_fx1 = J_CC(CC_NZ);
   OR(32, PPCSTATE(fpscr), Imm32(FPSCR_FX | FPSCR_ZX));
-  SetJumpTarget(skip_set_fx1);
-  MOV(64, R(RSCRATCH2), Imm64(0x7FF0'0000'0000'0000));
-  OR(64, R(RSCRATCH2), R(RSCRATCH));
-  MOVQ_xmm(XMM0, R(RSCRATCH2));
-  RET();
+  FixupBranch complex3 = J();
 
-  // SNaN or QNaN or +Inf or -Inf
-  SetJumpTarget(nan_or_inf);
-  MOV(64, R(RSCRATCH2), R(RSCRATCH));
-  SHL(64, R(RSCRATCH2), Imm8(12));
-  FixupBranch inf = J_CC(CC_Z);
-  BTS(64, R(RSCRATCH), Imm8(51));
-  MOVQ_xmm(XMM0, R(RSCRATCH));
-  RET();
-  SetJumpTarget(inf);
-  TEST(64, R(RSCRATCH), R(RSCRATCH));
-  FixupBranch negative = J_CC(CC_S);
-  XORPD(XMM0, R(XMM0));
-  RET();
-
-  SetJumpTarget(nonzero);
-  FixupBranch denormal = J_CC(CC_NC);
-
-  // Negative sign
+  // Exception flags for negative input.
   SetJumpTarget(negative);
   TEST(32, PPCSTATE(fpscr), Imm32(FPSCR_VXSQRT));
   FixupBranch skip_set_fx2 = J_CC(CC_NZ);
   OR(32, PPCSTATE(fpscr), Imm32(FPSCR_FX | FPSCR_VXSQRT));
-  SetJumpTarget(skip_set_fx2);
-  MOV(64, R(RSCRATCH2), Imm64(0x7FF8'0000'0000'0000));
-  MOVQ_xmm(XMM0, R(RSCRATCH2));
-  RET();
 
-  SetJumpTarget(denormal);
+  SetJumpTarget(skip_set_fx1);
+  SetJumpTarget(skip_set_fx2);
+  SetJumpTarget(complex1);
+  SetJumpTarget(complex2);
+  SetJumpTarget(complex3);
   ABI_PushRegistersAndAdjustStack(QUANTIZED_REGS_TO_SAVE, 8);
-  ABI_CallFunction(Common::ApproximateReciprocalSquareRoot);
+  ABI_CallFunction(MathUtil::ApproximateReciprocalSquareRoot);
   ABI_PopRegistersAndAdjustStack(QUANTIZED_REGS_TO_SAVE, 8);
   RET();
 
-  Common::JitRegister::Register(start, GetCodePtr(), "JIT_Frsqrte");
+  JitRegister::Register(start, GetCodePtr(), "JIT_Frsqrte");
 }
 
 void CommonAsmRoutines::GenFres()
@@ -249,16 +152,16 @@ void CommonAsmRoutines::GenFres()
   AND(32, R(RSCRATCH2), Imm8(0x1F));   // i / 1024
 
   PUSH(RSCRATCH_EXTRA);
-  MOV(64, R(RSCRATCH_EXTRA), ImmPtr(GetConstantFromPool(Common::fres_expected)));
-  static_assert(sizeof(Common::BaseAndDec) == 8, "Unable to use SCALE_8; incorrect size");
+  MOV(64, R(RSCRATCH_EXTRA), ImmPtr(GetConstantFromPool(MathUtil::fres_expected)));
+  static_assert(sizeof(MathUtil::BaseAndDec) == 8, "Unable to use SCALE_8; incorrect size");
 
   IMUL(32, RSCRATCH,
-       MComplex(RSCRATCH_EXTRA, RSCRATCH2, SCALE_8, offsetof(Common::BaseAndDec, m_dec)));
+       MComplex(RSCRATCH_EXTRA, RSCRATCH2, SCALE_8, offsetof(MathUtil::BaseAndDec, m_dec)));
   ADD(32, R(RSCRATCH), Imm8(1));
   SHR(32, R(RSCRATCH), Imm8(1));
 
   MOV(32, R(RSCRATCH2),
-      MComplex(RSCRATCH_EXTRA, RSCRATCH2, SCALE_8, offsetof(Common::BaseAndDec, m_base)));
+      MComplex(RSCRATCH_EXTRA, RSCRATCH2, SCALE_8, offsetof(MathUtil::BaseAndDec, m_base)));
   SUB(32, R(RSCRATCH2), R(RSCRATCH));
   SHL(64, R(RSCRATCH2), Imm8(29));
 
@@ -279,11 +182,11 @@ void CommonAsmRoutines::GenFres()
 
   SetJumpTarget(complex);
   ABI_PushRegistersAndAdjustStack(QUANTIZED_REGS_TO_SAVE, 8);
-  ABI_CallFunction(Common::ApproximateReciprocal);
+  ABI_CallFunction(MathUtil::ApproximateReciprocal);
   ABI_PopRegistersAndAdjustStack(QUANTIZED_REGS_TO_SAVE, 8);
   RET();
 
-  Common::JitRegister::Register(start, GetCodePtr(), "JIT_Fres");
+  JitRegister::Register(start, GetCodePtr(), "JIT_Fres");
 }
 
 void CommonAsmRoutines::GenMfcr()
@@ -297,15 +200,19 @@ void CommonAsmRoutines::GenMfcr()
   X64Reg tmp = RSCRATCH2;
   X64Reg cr_val = RSCRATCH_EXTRA;
   XOR(32, R(dst), R(dst));
-  // Upper bits of tmp need to be zeroed.
-  XOR(32, R(tmp), R(tmp));
   for (int i = 0; i < 8; i++)
   {
+    static const u32 m_flagTable[8] = {0x0, 0x1, 0x8, 0x9, 0x0, 0x1, 0x8, 0x9};
     if (i != 0)
       SHL(32, R(dst), Imm8(4));
 
-    MOV(64, R(cr_val), PPCSTATE_CR(i));
+    MOV(64, R(cr_val), PPCSTATE(cr_val[i]));
 
+    // Upper bits of tmp need to be zeroed.
+    // Note: tmp is used later for address calculations and thus
+    //       can't be zero-ed once. This also prevents partial
+    //       register stalls due to SETcc.
+    XOR(32, R(tmp), R(tmp));
     // EQ: Bits 31-0 == 0; set flag bit 1
     TEST(32, R(cr_val), R(cr_val));
     SETcc(CC_Z, R(tmp));
@@ -316,24 +223,28 @@ void CommonAsmRoutines::GenMfcr()
     SETcc(CC_G, R(tmp));
     LEA(32, dst, MComplex(dst, tmp, SCALE_4, 0));
 
-    // SO: Bit 59 set; set flag bit 0
+    // SO: Bit 61 set; set flag bit 0
     // LT: Bit 62 set; set flag bit 3
-    SHR(64, R(cr_val), Imm8(PowerPC::CR_EMU_SO_BIT));
-    AND(32, R(cr_val), Imm8(PowerPC::CR_LT | PowerPC::CR_SO));
-    OR(32, R(dst), R(cr_val));
+    SHR(64, R(cr_val), Imm8(61));
+    LEA(64, tmp, MConst(m_flagTable));
+    OR(32, R(dst), MComplex(tmp, cr_val, SCALE_4, 0));
   }
   RET();
 
-  Common::JitRegister::Register(start, GetCodePtr(), "JIT_Mfcr");
+  JitRegister::Register(start, GetCodePtr(), "JIT_Mfcr");
 }
 
 // Safe + Fast Quantizers, originally from JITIL by magumagu
-alignas(16) static const float m_65535[4] = {65535.0f, 65535.0f, 65535.0f, 65535.0f};
-alignas(16) static const float m_32767 = 32767.0f;
-alignas(16) static const float m_m32768 = -32768.0f;
-alignas(16) static const float m_255 = 255.0f;
-alignas(16) static const float m_127 = 127.0f;
-alignas(16) static const float m_m128 = -128.0f;
+static const float GC_ALIGNED16(m_65535[4]) = {65535.0f, 65535.0f, 65535.0f, 65535.0f};
+static const float GC_ALIGNED16(m_32767) = 32767.0f;
+static const float GC_ALIGNED16(m_m32768) = -32768.0f;
+static const float GC_ALIGNED16(m_255) = 255.0f;
+static const float GC_ALIGNED16(m_127) = 127.0f;
+static const float GC_ALIGNED16(m_m128) = -128.0f;
+
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+#define constexpr const
+#endif
 
 // Sizes of the various quantized store types
 constexpr std::array<u8, 8> sizes{{32, 0, 0, 0, 8, 16, 8, 16}};
@@ -341,25 +252,22 @@ constexpr std::array<u8, 8> sizes{{32, 0, 0, 0, 8, 16, 8, 16}};
 void CommonAsmRoutines::GenQuantizedStores()
 {
   // Aligned to 256 bytes as least significant byte needs to be zero (See: Jit64::psq_stXX).
-  paired_store_quantized = reinterpret_cast<const u8**>(AlignCodeTo(256));
+  pairedStoreQuantized = reinterpret_cast<const u8**>(const_cast<u8*>(AlignCodeTo(256)));
   ReserveCodeSpace(8 * sizeof(u8*));
 
   for (int type = 0; type < 8; type++)
-  {
-    paired_store_quantized[type] =
-        GenQuantizedStoreRuntime(false, static_cast<EQuantizeType>(type));
-  }
+    pairedStoreQuantized[type] = GenQuantizedStoreRuntime(false, static_cast<EQuantizeType>(type));
 }
 
 // See comment in header for in/outs.
 void CommonAsmRoutines::GenQuantizedSingleStores()
 {
   // Aligned to 256 bytes as least significant byte needs to be zero (See: Jit64::psq_stXX).
-  single_store_quantized = reinterpret_cast<const u8**>(AlignCodeTo(256));
+  singleStoreQuantized = reinterpret_cast<const u8**>(const_cast<u8*>(AlignCodeTo(256)));
   ReserveCodeSpace(8 * sizeof(u8*));
 
   for (int type = 0; type < 8; type++)
-    single_store_quantized[type] = GenQuantizedStoreRuntime(true, static_cast<EQuantizeType>(type));
+    singleStoreQuantized[type] = GenQuantizedStoreRuntime(true, static_cast<EQuantizeType>(type));
 }
 
 const u8* CommonAsmRoutines::GenQuantizedStoreRuntime(bool single, EQuantizeType type)
@@ -368,8 +276,7 @@ const u8* CommonAsmRoutines::GenQuantizedStoreRuntime(bool single, EQuantizeType
   const u8* load = AlignCode4();
   GenQuantizedStore(single, type, -1);
   RET();
-  Common::JitRegister::Register(start, GetCodePtr(), "JIT_QuantizedStore_{}_{}",
-                                Common::ToUnderlying(type), single);
+  JitRegister::Register(start, GetCodePtr(), "JIT_QuantizedStore_%i_%i", type, single);
 
   return load;
 }
@@ -377,21 +284,21 @@ const u8* CommonAsmRoutines::GenQuantizedStoreRuntime(bool single, EQuantizeType
 void CommonAsmRoutines::GenQuantizedLoads()
 {
   // Aligned to 256 bytes as least significant byte needs to be zero (See: Jit64::psq_lXX).
-  paired_load_quantized = reinterpret_cast<const u8**>(AlignCodeTo(256));
+  pairedLoadQuantized = reinterpret_cast<const u8**>(const_cast<u8*>(AlignCodeTo(256)));
   ReserveCodeSpace(8 * sizeof(u8*));
 
   for (int type = 0; type < 8; type++)
-    paired_load_quantized[type] = GenQuantizedLoadRuntime(false, static_cast<EQuantizeType>(type));
+    pairedLoadQuantized[type] = GenQuantizedLoadRuntime(false, static_cast<EQuantizeType>(type));
 }
 
 void CommonAsmRoutines::GenQuantizedSingleLoads()
 {
   // Aligned to 256 bytes as least significant byte needs to be zero (See: Jit64::psq_lXX).
-  single_load_quantized = reinterpret_cast<const u8**>(AlignCodeTo(256));
+  singleLoadQuantized = reinterpret_cast<const u8**>(const_cast<u8*>(AlignCodeTo(256)));
   ReserveCodeSpace(8 * sizeof(u8*));
 
   for (int type = 0; type < 8; type++)
-    single_load_quantized[type] = GenQuantizedLoadRuntime(true, static_cast<EQuantizeType>(type));
+    singleLoadQuantized[type] = GenQuantizedLoadRuntime(true, static_cast<EQuantizeType>(type));
 }
 
 const u8* CommonAsmRoutines::GenQuantizedLoadRuntime(bool single, EQuantizeType type)
@@ -400,8 +307,7 @@ const u8* CommonAsmRoutines::GenQuantizedLoadRuntime(bool single, EQuantizeType 
   const u8* load = AlignCode4();
   GenQuantizedLoad(single, type, -1);
   RET();
-  Common::JitRegister::Register(start, GetCodePtr(), "JIT_QuantizedLoad_{}_{}",
-                                Common::ToUnderlying(type), single);
+  JitRegister::Register(start, GetCodePtr(), "JIT_QuantizedLoad_%i_%i", type, single);
 
   return load;
 }
@@ -534,9 +440,8 @@ void QuantizedMemoryRoutines::GenQuantizedStore(bool single, EQuantizeType type,
     }
   }
 
-  int flags = isInline ? 0 :
-                         SAFE_LOADSTORE_NO_FASTMEM | SAFE_LOADSTORE_NO_PROLOG |
-                             SAFE_LOADSTORE_DR_ON | SAFE_LOADSTORE_NO_UPDATE_PC;
+  int flags =
+      isInline ? 0 : SAFE_LOADSTORE_NO_FASTMEM | SAFE_LOADSTORE_NO_PROLOG | SAFE_LOADSTORE_DR_ON;
   if (!single)
     flags |= SAFE_LOADSTORE_NO_SWAP;
 
@@ -591,15 +496,33 @@ void QuantizedMemoryRoutines::GenQuantizedLoad(bool single, EQuantizeType type, 
 
   bool extend = single && (type == QUANTIZE_S8 || type == QUANTIZE_S16);
 
-  BitSet32 regsToSave = QUANTIZED_REGS_TO_SAVE_LOAD;
-  int flags = isInline ? 0 :
-                         SAFE_LOADSTORE_NO_FASTMEM | SAFE_LOADSTORE_NO_PROLOG |
-                             SAFE_LOADSTORE_DR_ON | SAFE_LOADSTORE_NO_UPDATE_PC;
-  SafeLoadToReg(RSCRATCH_EXTRA, R(RSCRATCH_EXTRA), size, 0, regsToSave, extend, flags);
-  if (!single && (type == QUANTIZE_U8 || type == QUANTIZE_S8))
+  if (g_jit->jo.memcheck)
   {
-    // TODO: Support not swapping in safeLoadToReg to avoid bswapping twice
-    ROR(16, R(RSCRATCH_EXTRA), Imm8(8));
+    BitSet32 regsToSave = QUANTIZED_REGS_TO_SAVE_LOAD;
+    int flags =
+        isInline ? 0 : SAFE_LOADSTORE_NO_FASTMEM | SAFE_LOADSTORE_NO_PROLOG | SAFE_LOADSTORE_DR_ON;
+    SafeLoadToReg(RSCRATCH_EXTRA, R(RSCRATCH_EXTRA), size, 0, regsToSave, extend, flags);
+    if (!single && (type == QUANTIZE_U8 || type == QUANTIZE_S8))
+    {
+      // TODO: Support not swapping in safeLoadToReg to avoid bswapping twice
+      ROR(16, R(RSCRATCH_EXTRA), Imm8(8));
+    }
+  }
+  else
+  {
+    switch (type)
+    {
+    case QUANTIZE_U8:
+    case QUANTIZE_S8:
+      UnsafeLoadRegToRegNoSwap(RSCRATCH_EXTRA, RSCRATCH_EXTRA, size, 0, extend);
+      break;
+    case QUANTIZE_U16:
+    case QUANTIZE_S16:
+      UnsafeLoadRegToReg(RSCRATCH_EXTRA, RSCRATCH_EXTRA, size, 0, extend);
+      break;
+    default:
+      break;
+    }
   }
 
   if (single)
@@ -699,20 +622,56 @@ void QuantizedMemoryRoutines::GenQuantizedLoadFloat(bool single, bool isInline)
   int size = single ? 32 : 64;
   bool extend = false;
 
-  BitSet32 regsToSave = QUANTIZED_REGS_TO_SAVE;
-  int flags = isInline ? 0 :
-                         SAFE_LOADSTORE_NO_FASTMEM | SAFE_LOADSTORE_NO_PROLOG |
-                             SAFE_LOADSTORE_DR_ON | SAFE_LOADSTORE_NO_UPDATE_PC;
-  SafeLoadToReg(RSCRATCH_EXTRA, R(RSCRATCH_EXTRA), size, 0, regsToSave, extend, flags);
+  if (g_jit->jo.memcheck)
+  {
+    BitSet32 regsToSave = QUANTIZED_REGS_TO_SAVE;
+    int flags =
+        isInline ? 0 : SAFE_LOADSTORE_NO_FASTMEM | SAFE_LOADSTORE_NO_PROLOG | SAFE_LOADSTORE_DR_ON;
+    SafeLoadToReg(RSCRATCH_EXTRA, R(RSCRATCH_EXTRA), size, 0, regsToSave, extend, flags);
+  }
 
   if (single)
   {
-    MOVD_xmm(XMM0, R(RSCRATCH_EXTRA));
+    if (g_jit->jo.memcheck)
+    {
+      MOVD_xmm(XMM0, R(RSCRATCH_EXTRA));
+    }
+    else if (cpu_info.bSSSE3)
+    {
+      MOVD_xmm(XMM0, MRegSum(RMEM, RSCRATCH_EXTRA));
+      PSHUFB(XMM0, MConst(pbswapShuffle1x4));
+    }
+    else
+    {
+      LoadAndSwap(32, RSCRATCH_EXTRA, MRegSum(RMEM, RSCRATCH_EXTRA));
+      MOVD_xmm(XMM0, R(RSCRATCH_EXTRA));
+    }
+
     UNPCKLPS(XMM0, MConst(m_one));
   }
   else
   {
-    ROL(64, R(RSCRATCH_EXTRA), Imm8(32));
-    MOVQ_xmm(XMM0, R(RSCRATCH_EXTRA));
+    // FIXME? This code (in non-MMU mode) assumes all accesses are directly to RAM, i.e.
+    // don't need hardware access handling. This will definitely crash if paired loads occur
+    // from non-RAM areas, but as far as I know, this never happens. I don't know if this is
+    // for a good reason, or merely because no game does this.
+    // If we find something that actually does do this, maybe this should be changed. How
+    // much of a performance hit would it be?
+    if (g_jit->jo.memcheck)
+    {
+      ROL(64, R(RSCRATCH_EXTRA), Imm8(32));
+      MOVQ_xmm(XMM0, R(RSCRATCH_EXTRA));
+    }
+    else if (cpu_info.bSSSE3)
+    {
+      MOVQ_xmm(XMM0, MRegSum(RMEM, RSCRATCH_EXTRA));
+      PSHUFB(XMM0, MConst(pbswapShuffle2x4));
+    }
+    else
+    {
+      LoadAndSwap(64, RSCRATCH_EXTRA, MRegSum(RMEM, RSCRATCH_EXTRA));
+      ROL(64, R(RSCRATCH_EXTRA), Imm8(32));
+      MOVQ_xmm(XMM0, R(RSCRATCH_EXTRA));
+    }
   }
 }

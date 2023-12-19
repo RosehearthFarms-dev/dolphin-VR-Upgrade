@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // PRELIMINARY - seems to fully work with libogc, writing has yet to be tested
 
@@ -9,28 +10,32 @@
 #include <string>
 
 #include "Common/CommonTypes.h"
-#include "Common/IOFile.h"
-#include "Core/CPUThreadConfigCallback.h"
+#include "Common/File.h"
 #include "Core/IOS/Device.h"
 #include "Core/IOS/IOS.h"
 
 class PointerWrap;
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
+{
+namespace Device
 {
 // The front SD slot
-class SDIOSlot0Device : public EmulationDevice
+class SDIOSlot0 : public Device
 {
 public:
-  SDIOSlot0Device(EmulationKernel& ios, const std::string& device_name);
-  ~SDIOSlot0Device() override;
+  SDIOSlot0(Kernel& ios, const std::string& device_name);
 
   void DoState(PointerWrap& p) override;
 
-  std::optional<IPCReply> Open(const OpenRequest& request) override;
-  std::optional<IPCReply> Close(u32 fd) override;
-  std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override;
-  std::optional<IPCReply> IOCtlV(const IOCtlVRequest& request) override;
+  ReturnCode Open(const OpenRequest& request) override;
+  ReturnCode Close(u32 fd) override;
+  IPCCommandResult IOCtl(const IOCtlRequest& request) override;
+  IPCCommandResult IOCtlV(const IOCtlVRequest& request) override;
+
+  void EventNotify();
 
 private:
   // SD Host Controller Registers
@@ -124,23 +129,20 @@ private:
     Request request;
   };
 
-  void RefreshConfig();
+  IPCCommandResult WriteHCRegister(const IOCtlRequest& request);
+  IPCCommandResult ReadHCRegister(const IOCtlRequest& request);
+  IPCCommandResult ResetCard(const IOCtlRequest& request);
+  IPCCommandResult SetClk(const IOCtlRequest& request);
+  IPCCommandResult SendCommand(const IOCtlRequest& request);
+  IPCCommandResult GetStatus(const IOCtlRequest& request);
+  IPCCommandResult GetOCRegister(const IOCtlRequest& request);
 
-  void EventNotify();
+  IPCCommandResult SendCommand(const IOCtlVRequest& request);
 
-  IPCReply WriteHCRegister(const IOCtlRequest& request);
-  IPCReply ReadHCRegister(const IOCtlRequest& request);
-  IPCReply ResetCard(const IOCtlRequest& request);
-  IPCReply SetClk(const IOCtlRequest& request);
-  std::optional<IPCReply> SendCommand(const IOCtlRequest& request);
-  IPCReply GetStatus(const IOCtlRequest& request);
-  IPCReply GetOCRegister(const IOCtlRequest& request);
-
-  IPCReply SendCommand(const IOCtlVRequest& request);
-
-  s32 ExecuteCommand(const Request& request, u32 buffer_in, u32 buffer_in_size, u32 rw_buffer,
-                     u32 rw_buffer_size, u32 buffer_out, u32 buffer_out_size);
+  s32 ExecuteCommand(const Request& request, u32 BufferIn, u32 BufferInSize, u32 BufferIn2,
+                     u32 BufferInSize2, u32 _BufferOut, u32 BufferOutSize);
   void OpenInternal();
+  void InitStatus();
 
   u32 GetOCRegister() const;
 
@@ -163,11 +165,10 @@ private:
   u32 m_block_length = 0;
   u32 m_bus_width = 0;
 
-  std::array<u32, 0x200 / sizeof(u32)> m_registers{};
+  std::array<u32, 0x200 / sizeof(u32)> m_registers;
 
   File::IOFile m_card;
-
-  CPUThreadConfigCallback::ConfigChangedCallbackID m_config_callback_id;
-  bool m_sd_card_inserted = false;
 };
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

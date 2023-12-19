@@ -1,15 +1,10 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "VideoCommon/TextureDecoder.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-
-#ifdef CHECK
-#include "Common/Assert.h"
-#endif
 
 #include "Common/CPUDetect.h"
 #include "Common/CommonTypes.h"
@@ -18,6 +13,7 @@
 #include "Common/Swap.h"
 
 #include "VideoCommon/LookUpTables.h"
+#include "VideoCommon/TextureDecoder.h"
 #include "VideoCommon/TextureDecoder_Util.h"
 
 // GameCube/Wii texture decoder
@@ -1350,11 +1346,11 @@ static void TexDecoder_DecodeImpl_CMPR(u32* dst, const u8* src, int width, int h
 
         u32* dst32 = (dst + (y + z * 4) * width + x);
 
-        // Copy the colors here:
-        alignas(16) u32 colors0[4];
-        alignas(16) u32 colors1[4];
-        _mm_store_si128((__m128i*)colors0, mmcolors0);
-        _mm_store_si128((__m128i*)colors1, mmcolors1);
+            // Copy the colors here:
+            GC_ALIGNED16(u32 colors0[4]);
+            GC_ALIGNED16(u32 colors1[4]);
+            _mm_store_si128((__m128i*)colors0, mmcolors0);
+            _mm_store_si128((__m128i*)colors1, mmcolors1);
 
         // Row 0:
         dst32[(width * 0) + 0] = colors0[(dxt0sel >> ((0 * 8) + 6)) & 3];
@@ -1366,8 +1362,8 @@ static void TexDecoder_DecodeImpl_CMPR(u32* dst, const u8* src, int width, int h
         dst32[(width * 0) + 6] = colors1[(dxt1sel >> ((0 * 8) + 2)) & 3];
         dst32[(width * 0) + 7] = colors1[(dxt1sel >> ((0 * 8) + 0)) & 3];
 #ifdef CHECK
-        ASSERT(memcmp(&(tmp0[0]), &dst32[(width * 0)], 16) == 0);
-        ASSERT(memcmp(&(tmp1[0]), &dst32[(width * 0) + 4], 16) == 0);
+        assert(memcmp(&(tmp0[0]), &dst32[(width * 0)], 16) == 0);
+        assert(memcmp(&(tmp1[0]), &dst32[(width * 0) + 4], 16) == 0);
 #endif
         // Row 1:
         dst32[(width * 1) + 0] = colors0[(dxt0sel >> ((1 * 8) + 6)) & 3];
@@ -1379,8 +1375,8 @@ static void TexDecoder_DecodeImpl_CMPR(u32* dst, const u8* src, int width, int h
         dst32[(width * 1) + 6] = colors1[(dxt1sel >> ((1 * 8) + 2)) & 3];
         dst32[(width * 1) + 7] = colors1[(dxt1sel >> ((1 * 8) + 0)) & 3];
 #ifdef CHECK
-        ASSERT(memcmp(&(tmp0[1]), &dst32[(width * 1)], 16) == 0);
-        ASSERT(memcmp(&(tmp1[1]), &dst32[(width * 1) + 4], 16) == 0);
+        assert(memcmp(&(tmp0[1]), &dst32[(width * 1)], 16) == 0);
+        assert(memcmp(&(tmp1[1]), &dst32[(width * 1) + 4], 16) == 0);
 #endif
         // Row 2:
         dst32[(width * 2) + 0] = colors0[(dxt0sel >> ((2 * 8) + 6)) & 3];
@@ -1392,8 +1388,8 @@ static void TexDecoder_DecodeImpl_CMPR(u32* dst, const u8* src, int width, int h
         dst32[(width * 2) + 6] = colors1[(dxt1sel >> ((2 * 8) + 2)) & 3];
         dst32[(width * 2) + 7] = colors1[(dxt1sel >> ((2 * 8) + 0)) & 3];
 #ifdef CHECK
-        ASSERT(memcmp(&(tmp0[2]), &dst32[(width * 2)], 16) == 0);
-        ASSERT(memcmp(&(tmp1[2]), &dst32[(width * 2) + 4], 16) == 0);
+        assert(memcmp(&(tmp0[2]), &dst32[(width * 2)], 16) == 0);
+        assert(memcmp(&(tmp1[2]), &dst32[(width * 2) + 4], 16) == 0);
 #endif
         // Row 3:
         dst32[(width * 3) + 0] = colors0[(dxt0sel >> ((3 * 8) + 6)) & 3];
@@ -1405,8 +1401,8 @@ static void TexDecoder_DecodeImpl_CMPR(u32* dst, const u8* src, int width, int h
         dst32[(width * 3) + 6] = colors1[(dxt1sel >> ((3 * 8) + 2)) & 3];
         dst32[(width * 3) + 7] = colors1[(dxt1sel >> ((3 * 8) + 0)) & 3];
 #ifdef CHECK
-        ASSERT(memcmp(&(tmp0[3]), &dst32[(width * 3)], 16) == 0);
-        ASSERT(memcmp(&(tmp1[3]), &dst32[(width * 3) + 4], 16) == 0);
+        assert(memcmp(&(tmp0[3]), &dst32[(width * 3)], 16) == 0);
+        assert(memcmp(&(tmp1[3]), &dst32[(width * 3) + 4], 16) == 0);
 #endif
       }
     }
@@ -1490,12 +1486,9 @@ void _TexDecoder_DecodeImpl(u32* dst, const u8* src, int width, int height, Text
     TexDecoder_DecodeImpl_CMPR(dst, src, width, height, texformat, tlut, tlutfmt, Wsteps4, Wsteps8);
     break;
 
-  case TextureFormat::XFB:
-    TexDecoder_DecodeXFB(reinterpret_cast<u8*>(dst), src, width, height, width * 2);
-    break;
-
   default:
-    PanicAlertFmt("Invalid Texture Format {}! (_TexDecoder_DecodeImpl)", texformat);
+    PanicAlert("Invalid Texture Format (0x%X)! (_TexDecoder_DecodeImpl)",
+               static_cast<int>(texformat));
     break;
   }
 }

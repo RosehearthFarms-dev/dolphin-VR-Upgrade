@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // WARNING Code not big-endian safe.
 
@@ -17,7 +18,7 @@
 #include <vector>
 
 #include "Common/CommonTypes.h"
-#include "Common/IOFile.h"
+#include "Common/File.h"
 #include "DiscIO/Blob.h"
 
 namespace DiscIO
@@ -46,21 +47,10 @@ public:
   static std::unique_ptr<CompressedBlobReader> Create(File::IOFile file,
                                                       const std::string& filename);
   ~CompressedBlobReader();
-
   const CompressedBlobHeader& GetHeader() const { return m_header; }
-
   BlobType GetBlobType() const override { return BlobType::GCZ; }
-  std::unique_ptr<BlobReader> CopyReader() const override;
-
-  u64 GetRawSize() const override { return m_file_size; }
   u64 GetDataSize() const override { return m_header.data_size; }
-  DataSizeType GetDataSizeType() const override { return DataSizeType::Accurate; }
-
-  u64 GetBlockSize() const override { return m_header.block_size; }
-  bool HasFastRandomAccessInBlock() const override { return false; }
-  std::string GetCompressionMethod() const override { return "Deflate"; }
-  std::optional<int> GetCompressionLevel() const override { return std::nullopt; }
-
+  u64 GetRawSize() const override { return m_file_size; }
   u64 GetBlockCompressedSize(u64 block_num) const;
   bool GetBlock(u64 block_num, u8* out_ptr) override;
 
@@ -77,4 +67,4 @@ private:
   std::string m_file_name;
 };
 
-}  // namespace DiscIO
+}  // namespace

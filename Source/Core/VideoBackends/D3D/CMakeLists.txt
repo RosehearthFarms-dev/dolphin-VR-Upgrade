@@ -1,36 +1,51 @@
-add_library(videod3d
+set(SRCS
+  BoundingBox.cpp
+  BoundingBox.h
   D3DBase.cpp
   D3DBase.h
-  D3DBoundingBox.cpp
-  D3DBoundingBox.h
-  D3DMain.cpp
-  D3DNativeVertexFormat.cpp
-  D3DPerfQuery.cpp
-  D3DPerfQuery.h
-  D3DGfx.cpp
-  D3DGfx.h
+  D3DBlob.cpp
+  D3DBlob.h
+  D3DShader.cpp
+  D3DShader.h
   D3DState.cpp
   D3DState.h
-  D3DSwapChain.cpp
-  D3DVertexManager.cpp
-  D3DVertexManager.h
-  DXPipeline.cpp
-  DXPipeline.h
-  DXShader.cpp
-  DXShader.h
+  D3DTexture.cpp
+  D3DTexture.h
+  D3DUtil.cpp
+  D3DUtil.h
   DXTexture.cpp
   DXTexture.h
+  FramebufferManager.cpp
+  FramebufferManager.h
+  GeometryShaderCache.cpp
+  GeometryShaderCache.h
+  main.cpp
+  NativeVertexFormat.cpp
+  PerfQuery.cpp
+  PerfQuery.h
+  PixelShaderCache.cpp
+  PixelShaderCache.h
+  PSTextureEncoder.cpp
+  PSTextureEncoder.h
+  Render.cpp
+  Render.h
+  Television.cpp
+  Television.h
+  TextureCache.cpp
+  TextureCache.h
+  VertexManager.cpp
+  VertexManager.h
+  VertexShaderCache.cpp
+  VertexShaderCache.h
   VideoBackend.h
+  XFBEncoder.cpp
+  XFBEncoder.h
 )
 
-target_link_libraries(videod3d
-PUBLIC
-  common
+set(LIBS
   videocommon
-  videod3dcommon
+  SOIL
+  common
 )
 
-if(MSVC)
-  # Add precompiled header
-  target_link_libraries(videod3d PRIVATE use_pch)
-endif()
+add_dolphin_library(videod3d "${SRCS}" "${LIBS}")

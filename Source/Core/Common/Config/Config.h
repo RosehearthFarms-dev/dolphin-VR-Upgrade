@@ -1,12 +1,12 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <functional>
 #include <map>
 #include <memory>
-#include <optional>
 #include <string>
 
 #include "Common/Config/ConfigInfo.h"
@@ -15,29 +15,19 @@
 
 namespace Config
 {
-struct ConfigChangedCallbackID
-{
-  size_t id = -1;
-
-  bool operator==(const ConfigChangedCallbackID&) const = default;
-  bool operator!=(const ConfigChangedCallbackID&) const = default;
-};
-
+using Layers = std::map<LayerType, std::unique_ptr<Layer>>;
 using ConfigChangedCallback = std::function<void()>;
 
 // Layer management
+Layers* GetLayers();
+void AddLayer(std::unique_ptr<Layer> layer);
 void AddLayer(std::unique_ptr<ConfigLayerLoader> loader);
-std::shared_ptr<Layer> GetLayer(LayerType layer);
+Layer* GetLayer(LayerType layer);
 void RemoveLayer(LayerType layer);
+bool LayerExists(LayerType layer);
 
-// Returns an ID that can be passed to RemoveConfigChangedCallback().
-// The callback may be called from any thread.
-ConfigChangedCallbackID AddConfigChangedCallback(ConfigChangedCallback func);
-void RemoveConfigChangedCallback(ConfigChangedCallbackID callback_id);
-void OnConfigChanged();
-
-// Returns the number of times the config has changed in the current execution of the program
-u64 GetConfigVersion();
+void AddConfigChangedCallback(ConfigChangedCallback func);
+void InvokeConfigChangedCallbacks();
 
 // Explicit load and save of layers
 void Load();
@@ -46,104 +36,106 @@ void Save();
 void Init();
 void Shutdown();
 void ClearCurrentRunLayer();
+void CreateVRGameLayer();
+bool OverrideSectionWithSection(const std::string& sectionName, const std::string& sectionName2);
 
 const std::string& GetSystemName(System system);
-std::optional<System> GetSystemFromName(const std::string& system);
+System GetSystemFromName(const std::string& system);
 const std::string& GetLayerName(LayerType layer);
-LayerType GetActiveLayerForConfig(const Location&);
-
-std::optional<std::string> GetAsString(const Location&);
+LayerType GetActiveLayerForConfig(const ConfigLocation&);
 
 template <typename T>
-T Get(LayerType layer, const Info<T>& info)
+T Get(LayerType layer, const ConfigInfo<T>& info)
 {
   if (layer == LayerType::Meta)
     return Get(info);
+  if (!LayerExists(layer))
+    return info.default_value;
   return GetLayer(layer)->Get(info);
 }
 
 template <typename T>
-T Get(const Info<T>& info)
+T Get(const ConfigInfo<T>& info)
 {
-  CachedValue<T> cached = info.GetCachedValue();
-  const u64 config_version = GetConfigVersion();
-
-  if (cached.config_version < config_version)
-  {
-    cached.value = GetUncached(info);
-    cached.config_version = config_version;
-
-    info.SetCachedValue(cached);
-  }
-
-  return cached.value;
+  return GetLayer(GetActiveLayerForConfig(info.location))->Get(info);
 }
 
 template <typename T>
-T GetUncached(const Info<T>& info)
-{
-  const std::optional<std::string> str = GetAsString(info.GetLocation());
-  if (!str)
-    return info.GetDefaultValue();
-
-  return detail::TryParse<T>(*str).value_or(info.GetDefaultValue());
-}
-
-template <typename T>
-T GetBase(const Info<T>& info)
+T GetBase(const ConfigInfo<T>& info)
 {
   return Get(LayerType::Base, info);
 }
 
 template <typename T>
-LayerType GetActiveLayerForConfig(const Info<T>& info)
+LayerType GetActiveLayerForConfig(const ConfigInfo<T>& info)
 {
-  return GetActiveLayerForConfig(info.GetLocation());
+  return GetActiveLayerForConfig(info.location);
 }
 
 template <typename T>
-void Set(LayerType layer, const Info<T>& info, const std::common_type_t<T>& value)
+void Set(LayerType layer, const ConfigInfo<T>& info, const T& value)
 {
-  if (GetLayer(layer)->Set(info, value))
-    OnConfigChanged();
+  GetLayer(layer)->Set(info, value);
+  InvokeConfigChangedCallbacks();
 }
 
 template <typename T>
-void SetBase(const Info<T>& info, const std::common_type_t<T>& value)
+void SetBase(const ConfigInfo<T>& info, const T& value)
 {
   Set<T>(LayerType::Base, info, value);
 }
 
 template <typename T>
-void SetCurrent(const Info<T>& info, const std::common_type_t<T>& value)
+void SetCurrent(const ConfigInfo<T>& info, const T& value)
 {
   Set<T>(LayerType::CurrentRun, info, value);
 }
 
 template <typename T>
-void SetBaseOrCurrent(const Info<T>& info, const std::common_type_t<T>& value)
+void SetBaseOrCurrent(const ConfigInfo<T>& info, const T& value)
 {
   if (GetActiveLayerForConfig(info) == LayerType::Base)
     Set<T>(LayerType::Base, info, value);
   else
     Set<T>(LayerType::CurrentRun, info, value);
+  // Carl: TODO: pass in active layer's value as the default?
 }
 
 template <typename T>
-void DeleteKey(LayerType layer, const Info<T>& info)
+void ResetToGameDefault(const ConfigInfo<T>& info)
 {
-  if (GetLayer(layer)->DeleteKey(info.GetLocation()))
-    OnConfigChanged();
+  Config::Layer* base = GetLayer(Config::LayerType::Base);
+  Config::Layer* run = GetLayer(Config::LayerType::CurrentRun);
+  Config::Layer* local = GetLayer(Config::LayerType::LocalGame);
+  if (base)
+    base->DeleteKey(info.location);
+  if (run)
+    run->DeleteKey(info.location);
+  if (local)
+    local->DeleteKey(info.location);
 }
 
-// Used to defer OnConfigChanged until after the completion of many config changes.
-class ConfigChangeCallbackGuard
+template <typename T>
+void SaveIfNotDefault(const ConfigInfo<T>& info)
 {
-public:
-  ConfigChangeCallbackGuard();
-  ~ConfigChangeCallbackGuard();
+  T default = Config::Get(Config::LayerType::GlobalGame, info);
+  T value = Config::Get(info);
+  if (value != default)
+  {
+    Config::Set(Config::LayerType::LocalGame, info, value);
+    Config::Layer* layer = Config::GetLayer(Config::LayerType::Base);
+    if (layer)
+      layer->DeleteKey(info.location);
+    layer = Config::GetLayer(Config::LayerType::CurrentRun);
+    if (layer)
+      layer->DeleteKey(info.location);
+  }
+  else
+  {
+    Config::Layer* layer = Config::GetLayer(Config::LayerType::LocalGame);
+    if (layer)
+      layer->DeleteKey(info.location);
+  }
+}
 
-  ConfigChangeCallbackGuard(const ConfigChangeCallbackGuard&) = delete;
-  ConfigChangeCallbackGuard& operator=(const ConfigChangeCallbackGuard&) = delete;
-};
-}  // namespace Config
+}

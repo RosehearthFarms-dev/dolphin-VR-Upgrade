@@ -1,7 +1,6 @@
 // Copyright 2013 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#pragma once
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <string>
 
@@ -37,7 +36,6 @@
 #include "Common/GL/GLExtensions/EXT_texture_filter_anisotropic.h"
 #include "Common/GL/GLExtensions/HP_occlusion_test.h"
 #include "Common/GL/GLExtensions/KHR_debug.h"
-#include "Common/GL/GLExtensions/KHR_shader_subgroup.h"
 #include "Common/GL/GLExtensions/NV_depth_buffer_float.h"
 #include "Common/GL/GLExtensions/NV_occlusion_query_samples.h"
 #include "Common/GL/GLExtensions/NV_primitive_restart.h"
@@ -56,12 +54,10 @@
 #include "Common/GL/GLExtensions/gl_4_4.h"
 #include "Common/GL/GLExtensions/gl_4_5.h"
 
-class GLContext;
-
 namespace GLExtensions
 {
 // Initializes the interface
-bool Init(GLContext* context);
+bool Init();
 
 // Function for checking if the hardware supports an extension
 // example: if (GLExtensions::Supports("GL_ARB_multi_map"))
@@ -69,4 +65,4 @@ bool Supports(const std::string& name);
 
 // Returns OpenGL version in format 430
 u32 Version();
-}  // namespace GLExtensions
+}

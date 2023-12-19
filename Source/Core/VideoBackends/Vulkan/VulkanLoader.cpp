@@ -1,24 +1,22 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#define VMA_IMPLEMENTATION
-#include "VideoBackends/Vulkan/VulkanLoader.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <atomic>
 #include <cstdarg>
-#include <cstdlib>
-
-#if defined(ANDROID)
-#include <adrenotools/driver.h>
-#include <dlfcn.h>
-#endif
 
 #include "Common/CommonFuncs.h"
-#include "Common/DynamicLibrary.h"
-#include "Common/FileUtil.h"
+#include "Common/Logging/Log.h"
 #include "Common/StringUtil.h"
 
-#include "VideoCommon/VideoConfig.h"
+#include "VideoBackends/Vulkan/VulkanLoader.h"
+
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+#include <Windows.h>
+#elif defined(VK_USE_PLATFORM_XLIB_KHR) || defined(VK_USE_PLATFORM_XCB_KHR) ||                     \
+    defined(VK_USE_PLATFORM_ANDROID_KHR)
+#include <dlfcn.h>
+#endif
 
 #define VULKAN_MODULE_ENTRY_POINT(name, required) PFN_##name name;
 #define VULKAN_INSTANCE_ENTRY_POINT(name, required) PFN_##name name;
@@ -41,84 +39,146 @@ static void ResetVulkanLibraryFunctionPointers()
 #undef VULKAN_MODULE_ENTRY_POINT
 }
 
-static Common::DynamicLibrary s_vulkan_module;
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
 
-static bool OpenVulkanLibrary(bool force_system_library)
+static HMODULE vulkan_module;
+static std::atomic_int vulkan_module_ref_count = {0};
+
+bool LoadVulkanLibrary()
 {
-#if defined(__APPLE__)
-  // Check if a path to a specific Vulkan library has been specified.
-  char* libvulkan_env = getenv("LIBVULKAN_PATH");
-  if (libvulkan_env && s_vulkan_module.Open(libvulkan_env))
-    return true;
-
-  // Use the libMoltenVK.dylib from the application bundle.
-  std::string filename = File::GetBundleDirectory() + "/Contents/Frameworks/libMoltenVK.dylib";
-  return s_vulkan_module.Open(filename.c_str());
-#else
-
-#if defined(ANDROID) && _M_ARM_64
-  const std::string& driver_lib_name = g_Config.customDriverLibraryName;
-
-  if (!force_system_library && !driver_lib_name.empty() && SupportsCustomDriver())
+  // Not thread safe if a second thread calls the loader whilst the first is still in-progress.
+  if (vulkan_module)
   {
-    std::string tmp_dir = File::GetGpuDriverDirectory(D_GPU_DRIVERS_TMP);
-    std::string hook_dir = File::GetGpuDriverDirectory(D_GPU_DRIVERS_HOOKS);
-    std::string file_redirect_dir = File::GetGpuDriverDirectory(D_GPU_DRIVERS_FILE_REDIRECT);
-    std::string driver_dir = File::GetGpuDriverDirectory(D_GPU_DRIVERS_EXTRACTED);
-    INFO_LOG_FMT(HOST_GPU, "Loading driver: {}", driver_lib_name);
-
-    s_vulkan_module = adrenotools_open_libvulkan(
-        RTLD_NOW, ADRENOTOOLS_DRIVER_FILE_REDIRECT | ADRENOTOOLS_DRIVER_CUSTOM, tmp_dir.c_str(),
-        hook_dir.c_str(), driver_dir.c_str(), driver_lib_name.c_str(), file_redirect_dir.c_str(),
-        nullptr);
-    if (s_vulkan_module.IsOpen())
-    {
-      INFO_LOG_FMT(HOST_GPU, "Successfully loaded driver: {}", driver_lib_name);
-      return true;
-    }
-    else
-    {
-      WARN_LOG_FMT(HOST_GPU, "Loading driver {} failed.", driver_lib_name);
-    }
-  }
-#endif
-
-  WARN_LOG_FMT(HOST_GPU, "Loading system driver");
-  std::string filename = Common::DynamicLibrary::GetVersionedFilename("vulkan", 1);
-  if (s_vulkan_module.Open(filename.c_str()))
+    vulkan_module_ref_count++;
     return true;
+  }
 
-  // Android devices may not have libvulkan.so.1, only libvulkan.so.
-  filename = Common::DynamicLibrary::GetVersionedFilename("vulkan");
-  return s_vulkan_module.Open(filename.c_str());
-#endif
-}
-
-bool LoadVulkanLibrary(bool force_system_library)
-{
-  if (!s_vulkan_module.IsOpen() && !OpenVulkanLibrary(force_system_library))
+  vulkan_module = LoadLibraryA("vulkan-1.dll");
+  if (!vulkan_module)
+  {
+    ERROR_LOG(VIDEO, "Failed to load vulkan-1.dll");
     return false;
+  }
+
+  bool required_functions_missing = false;
+  auto LoadFunction = [&](FARPROC* func_ptr, const char* name, bool is_required) {
+    *func_ptr = GetProcAddress(vulkan_module, name);
+    if (!(*func_ptr) && is_required)
+    {
+      ERROR_LOG(VIDEO, "Vulkan: Failed to load required module function %s", name);
+      required_functions_missing = true;
+    }
+  };
 
 #define VULKAN_MODULE_ENTRY_POINT(name, required)                                                  \
-  if (!s_vulkan_module.GetSymbol(#name, &name) && required)                                        \
-  {                                                                                                \
-    ERROR_LOG_FMT(VIDEO, "Vulkan: Failed to load required module function {}", #name);             \
-    ResetVulkanLibraryFunctionPointers();                                                          \
-    s_vulkan_module.Close();                                                                       \
-    return false;                                                                                  \
-  }
+  LoadFunction(reinterpret_cast<FARPROC*>(&name), #name, required);
 #include "VideoBackends/Vulkan/VulkanEntryPoints.inl"
 #undef VULKAN_MODULE_ENTRY_POINT
 
+  if (required_functions_missing)
+  {
+    ResetVulkanLibraryFunctionPointers();
+    FreeLibrary(vulkan_module);
+    vulkan_module = nullptr;
+    return false;
+  }
+
+  vulkan_module_ref_count++;
   return true;
 }
 
 void UnloadVulkanLibrary()
 {
-  s_vulkan_module.Close();
-  if (!s_vulkan_module.IsOpen())
-    ResetVulkanLibraryFunctionPointers();
+  if ((--vulkan_module_ref_count) > 0)
+    return;
+
+  ResetVulkanLibraryFunctionPointers();
+  FreeLibrary(vulkan_module);
+  vulkan_module = nullptr;
 }
+
+#elif defined(VK_USE_PLATFORM_XLIB_KHR) || defined(VK_USE_PLATFORM_XCB_KHR) ||                     \
+    defined(VK_USE_PLATFORM_ANDROID_KHR)
+
+static void* vulkan_module;
+static std::atomic_int vulkan_module_ref_count = {0};
+
+bool LoadVulkanLibrary()
+{
+  // Not thread safe if a second thread calls the loader whilst the first is still in-progress.
+  if (vulkan_module)
+  {
+    vulkan_module_ref_count++;
+    return true;
+  }
+
+  // Names of libraries to search. Desktop should use libvulkan.so.1 or libvulkan.so.
+  static const char* search_lib_names[] = {"libvulkan.so.1", "libvulkan.so"};
+
+  for (size_t i = 0; i < ArraySize(search_lib_names); i++)
+  {
+    vulkan_module = dlopen(search_lib_names[i], RTLD_NOW);
+    if (vulkan_module)
+      break;
+  }
+
+  if (!vulkan_module)
+  {
+    ERROR_LOG(VIDEO, "Failed to load or locate libvulkan.so");
+    return false;
+  }
+
+  bool required_functions_missing = false;
+  auto LoadFunction = [&](void** func_ptr, const char* name, bool is_required) {
+    *func_ptr = dlsym(vulkan_module, name);
+    if (!(*func_ptr) && is_required)
+    {
+      ERROR_LOG(VIDEO, "Vulkan: Failed to load required module function %s", name);
+      required_functions_missing = true;
+    }
+  };
+
+#define VULKAN_MODULE_ENTRY_POINT(name, required)                                                  \
+  LoadFunction(reinterpret_cast<void**>(&name), #name, required);
+#include "VideoBackends/Vulkan/VulkanEntryPoints.inl"
+#undef VULKAN_MODULE_ENTRY_POINT
+
+  if (required_functions_missing)
+  {
+    ResetVulkanLibraryFunctionPointers();
+    dlclose(vulkan_module);
+    vulkan_module = nullptr;
+    return false;
+  }
+
+  vulkan_module_ref_count++;
+  return true;
+}
+
+void UnloadVulkanLibrary()
+{
+  if ((--vulkan_module_ref_count) > 0)
+    return;
+
+  ResetVulkanLibraryFunctionPointers();
+  dlclose(vulkan_module);
+  vulkan_module = nullptr;
+}
+#else
+
+//#warning Unknown platform, not compiling loader.
+
+bool LoadVulkanLibrary()
+{
+  return false;
+}
+
+void UnloadVulkanLibrary()
+{
+  ResetVulkanLibraryFunctionPointers();
+}
+
+#endif
 
 bool LoadVulkanInstanceFunctions(VkInstance instance)
 {
@@ -127,7 +187,7 @@ bool LoadVulkanInstanceFunctions(VkInstance instance)
     *func_ptr = vkGetInstanceProcAddr(instance, name);
     if (!(*func_ptr) && is_required)
     {
-      ERROR_LOG_FMT(HOST_GPU, "Vulkan: Failed to load required instance function {}", name);
+      ERROR_LOG(VIDEO, "Vulkan: Failed to load required instance function %s", name);
       required_functions_missing = true;
     }
   };
@@ -147,7 +207,7 @@ bool LoadVulkanDeviceFunctions(VkDevice device)
     *func_ptr = vkGetDeviceProcAddr(device, name);
     if (!(*func_ptr) && is_required)
     {
-      ERROR_LOG_FMT(HOST_GPU, "Vulkan: Failed to load required device function {}", name);
+      ERROR_LOG(VIDEO, "Vulkan: Failed to load required device function %s", name);
       required_functions_missing = true;
     }
   };
@@ -241,25 +301,17 @@ const char* VkResultToString(VkResult res)
   }
 }
 
-void LogVulkanResult(Common::Log::LogLevel level, const char* func_name, VkResult res,
-                     const char* msg)
+void LogVulkanResult(int level, const char* func_name, VkResult res, const char* msg, ...)
 {
-  GENERIC_LOG_FMT(Common::Log::LogType::VIDEO, level, "({}) {} ({}: {})", func_name, msg,
-                  static_cast<int>(res), VkResultToString(res));
-}
+  std::va_list ap;
+  va_start(ap, msg);
+  std::string real_msg = StringFromFormatV(msg, ap);
+  va_end(ap);
 
-#ifdef ANDROID
-static bool CheckKgslPresent()
-{
-  constexpr auto KgslPath{"/dev/kgsl-3d0"};
+  real_msg = StringFromFormat("(%s) %s (%d: %s)", func_name, real_msg.c_str(),
+                              static_cast<int>(res), VkResultToString(res));
 
-  return access(KgslPath, F_OK) == 0;
+  GENERIC_LOG(LogTypes::VIDEO, static_cast<LogTypes::LOG_LEVELS>(level), "%s", real_msg.c_str());
 }
-
-bool SupportsCustomDriver()
-{
-  return android_get_device_api_level() >= 28 && CheckKgslPresent();
-}
-#endif
 
 }  // namespace Vulkan

@@ -1,48 +1,26 @@
-add_library(videosoftware
+set(SRCS
   Clipper.cpp
-  Clipper.h
-  CopyRegion.h
+  DebugUtil.cpp
   EfbCopy.cpp
-  EfbCopy.h
   EfbInterface.cpp
-  EfbInterface.h
-  NativeVertexFormat.h
   Rasterizer.cpp
-  Rasterizer.h
-  SetupUnit.cpp
-  SetupUnit.h
-  SWmain.cpp
-  SWBoundingBox.cpp
-  SWBoundingBox.h
-  SWGfx.cpp
-  SWGfx.h
   SWOGLWindow.cpp
-  SWOGLWindow.h
   SWRenderer.cpp
-  SWRenderer.h
   SWTexture.cpp
-  SWTexture.h
   SWVertexLoader.cpp
-  SWVertexLoader.h
+  SWmain.cpp
+  SetupUnit.cpp
   Tev.cpp
-  Tev.h
   TextureEncoder.cpp
-  TextureEncoder.h
   TextureSampler.cpp
-  TextureSampler.h
   TransformUnit.cpp
-  TransformUnit.h
-  Vec3.h
-  VideoBackend.h
 )
 
-target_link_libraries(videosoftware
-PUBLIC
-  common
+set(LIBS
   videocommon
+  SOIL
+  common
+  ${X11_LIBRARIES}
 )
 
-if(MSVC)
-  # Add precompiled header
-  target_link_libraries(videosoftware PRIVATE use_pch)
-endif()
+add_dolphin_library(videosoftware "${SRCS}" "${LIBS}")

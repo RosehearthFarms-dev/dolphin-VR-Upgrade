@@ -14,6 +14,13 @@
 ///
 ////////////////////////////////////////////////////////////////////////////////
 //
+// Last changed  : $Date: 2015-07-26 17:45:48 +0300 (Sun, 26 Jul 2015) $
+// File revision : $Revision: 4 $
+//
+// $Id: RateTransposer.h 225 2015-07-26 14:45:48Z oparviai $
+//
+////////////////////////////////////////////////////////////////////////////////
+//
 // License :
 //
 //  SoundTouch audio processing library
@@ -59,6 +66,8 @@ public:
     };
 
 protected:
+    virtual void resetRegisters() = 0;
+
     virtual int transposeMono(SAMPLETYPE *dest, 
                         const SAMPLETYPE *src, 
                         int &srcSamples)  = 0;
@@ -81,9 +90,6 @@ public:
     virtual int transpose(FIFOSampleBuffer &dest, FIFOSampleBuffer &src);
     virtual void setRate(double newRate);
     virtual void setChannels(int channels);
-    virtual int getLatency() const = 0;
-
-    virtual void resetRegisters() = 0;
 
     // static factory function
     static TransposerBase *newInstance();
@@ -124,10 +130,22 @@ protected:
 
 public:
     RateTransposer();
-    virtual ~RateTransposer() override;
+    virtual ~RateTransposer();
+
+    /// Operator 'new' is overloaded so that it automatically creates a suitable instance 
+    /// depending on if we're to use integer or floating point arithmetics.
+//    static void *operator new(size_t s);
+
+    /// Use this function instead of "new" operator to create a new instance of this class. 
+    /// This function automatically chooses a correct implementation, depending on if 
+    /// integer ot floating point arithmetics are to be used.
+//    static RateTransposer *newInstance();
 
     /// Returns the output buffer object
     FIFOSamplePipe *getOutput() { return &outputBuffer; };
+
+    /// Returns the store buffer object
+//    FIFOSamplePipe *getStore() { return &storeBuffer; };
 
     /// Return anti-alias filter object
     AAFilter *getAAFilter();
@@ -147,16 +165,13 @@ public:
 
     /// Adds 'numSamples' pcs of samples from the 'samples' memory position into
     /// the input of the object.
-    void putSamples(const SAMPLETYPE *samples, uint numSamples) override;
+    void putSamples(const SAMPLETYPE *samples, uint numSamples);
 
     /// Clears all the samples in the object
-    void clear() override;
+    void clear();
 
     /// Returns nonzero if there aren't any samples available for outputting.
-    int isEmpty() const override;
-
-    /// Return approximate initial input-output latency
-    int getLatency() const;
+    int isEmpty() const;
 };
 
 }

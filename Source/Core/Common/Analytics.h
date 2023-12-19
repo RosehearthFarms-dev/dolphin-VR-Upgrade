@@ -1,22 +1,22 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <chrono>
 #include <memory>
-#include <shared_mutex>
+#include <mutex>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include "Common/CommonTypes.h"
 #include "Common/Event.h"
+#include "Common/FifoQueue.h"
 #include "Common/Flag.h"
 #include "Common/HttpRequest.h"
-#include "Common/SPSCQueue.h"
 
 // Utilities for analytics reporting in Dolphin. This reporting is designed to
 // provide anonymous data about how well Dolphin performs in the wild. It also
@@ -42,11 +42,11 @@
 namespace Common
 {
 // Generic interface for an analytics reporting backends. The main
-// implementation used in Dolphin can be found in Core/DolphinAnalytics.h.
+// implementation used in Dolphin can be found in Core/Analytics.h.
 class AnalyticsReportingBackend
 {
 public:
-  virtual ~AnalyticsReportingBackend() = default;
+  virtual ~AnalyticsReportingBackend() {}
   // Called from the AnalyticsReporter backend thread.
   virtual void Send(std::string report) = 0;
 };
@@ -58,16 +58,20 @@ public:
   AnalyticsReportBuilder();
   ~AnalyticsReportBuilder() = default;
 
-  AnalyticsReportBuilder(const AnalyticsReportBuilder& other) : m_report{other.Get()} {}
-  AnalyticsReportBuilder(AnalyticsReportBuilder&& other) : m_report{other.Consume()} {}
+  AnalyticsReportBuilder(const AnalyticsReportBuilder& other) { *this = other; }
+  AnalyticsReportBuilder(AnalyticsReportBuilder&& other)
+  {
+    std::lock_guard<std::mutex> lk(other.m_lock);
+    m_report = std::move(other.m_report);
+  }
 
   const AnalyticsReportBuilder& operator=(const AnalyticsReportBuilder& other)
   {
     if (this != &other)
     {
-      std::string other_report = other.Get();
-      std::lock_guard lk{m_lock};
-      m_report = std::move(other_report);
+      std::lock_guard<std::mutex> lk(m_lock);
+      std::lock_guard<std::mutex> lk2(other.m_lock);
+      m_report = other.m_report;
     }
     return *this;
   }
@@ -77,44 +81,35 @@ public:
   {
     // Get before locking the object to avoid deadlocks with this += this.
     std::string other_report = other.Get();
-    std::lock_guard lk{m_lock};
+    std::lock_guard<std::mutex> lk(m_lock);
     m_report += other_report;
     return *this;
   }
 
   template <typename T>
-  AnalyticsReportBuilder& AddData(std::string_view key, const T& value)
+  AnalyticsReportBuilder& AddData(const std::string& key, const T& value)
   {
-    std::lock_guard lk{m_lock};
+    std::lock_guard<std::mutex> lk(m_lock);
     AppendSerializedValue(&m_report, key);
     AppendSerializedValue(&m_report, value);
     return *this;
   }
 
-  template <typename T>
-  AnalyticsReportBuilder& AddData(std::string_view key, const std::vector<T>& value)
-  {
-    std::lock_guard lk{m_lock};
-    AppendSerializedValue(&m_report, key);
-    AppendSerializedValueVector(&m_report, value);
-    return *this;
-  }
-
   std::string Get() const
   {
-    std::shared_lock lk{m_lock};
+    std::lock_guard<std::mutex> lk(m_lock);
     return m_report;
   }
 
   // More efficient version of Get().
   std::string Consume()
   {
-    std::lock_guard lk{m_lock};
+    std::lock_guard<std::mutex> lk(m_lock);
     return std::move(m_report);
   }
 
 protected:
-  static void AppendSerializedValue(std::string* report, std::string_view v);
+  static void AppendSerializedValue(std::string* report, const std::string& v);
   static void AppendSerializedValue(std::string* report, const char* v);
   static void AppendSerializedValue(std::string* report, bool v);
   static void AppendSerializedValue(std::string* report, u64 v);
@@ -123,9 +118,8 @@ protected:
   static void AppendSerializedValue(std::string* report, s32 v);
   static void AppendSerializedValue(std::string* report, float v);
 
-  static void AppendSerializedValueVector(std::string* report, const std::vector<u32>& v);
-
-  mutable std::shared_mutex m_lock;
+  // Should really be a std::shared_mutex, unfortunately that's C++17 only.
+  mutable std::mutex m_lock;
   std::string m_report;
 };
 
@@ -154,7 +148,6 @@ public:
 
   // For convenience.
   void Send(AnalyticsReportBuilder& report) { Send(std::move(report)); }
-
 protected:
   void ThreadProc();
 
@@ -162,9 +155,9 @@ protected:
   AnalyticsReportBuilder m_base_builder;
 
   std::thread m_reporter_thread;
-  Common::Event m_reporter_event;
+  Common::Event m_reporter_event, m_reporter_finished_event;
   Common::Flag m_reporter_stop_request;
-  SPSCQueue<std::string> m_reports_queue;
+  FifoQueue<std::string> m_reports_queue;
 };
 
 // Analytics backend to be used for debugging purpose, which dumps reports to
@@ -180,7 +173,7 @@ public:
 class HttpAnalyticsBackend : public AnalyticsReportingBackend
 {
 public:
-  explicit HttpAnalyticsBackend(std::string endpoint);
+  HttpAnalyticsBackend(const std::string& endpoint);
   ~HttpAnalyticsBackend() override;
 
   void Send(std::string report) override;
@@ -189,4 +182,5 @@ protected:
   std::string m_endpoint;
   HttpRequest m_http{std::chrono::seconds{5}};
 };
+
 }  // namespace Common

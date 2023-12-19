@@ -1,30 +1,46 @@
 // Copyright 2015 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
+#include <memory>
+
+#include "VideoBackends/Null/NullTexture.h"
+
 #include "VideoCommon/TextureCacheBase.h"
+#include "VideoCommon/TextureConfig.h"
 
 namespace Null
 {
-class TextureCache final : public TextureCacheBase
+class TextureCache : public TextureCacheBase
 {
-protected:
-  void CopyEFB(AbstractStagingTexture* dst, const EFBCopyParams& params, u32 native_width,
-               u32 bytes_per_row, u32 num_blocks_y, u32 memory_stride,
-               const MathUtil::Rectangle<int>& src_rect, bool scale_by_half, bool linear_filter,
-               float y_scale, float gamma, bool clamp_top, bool clamp_bottom,
-               const std::array<u32, 3>& filter_coefficients) override
+public:
+  TextureCache() {}
+  ~TextureCache() {}
+  bool CompileShaders() override { return true; }
+  void DeleteShaders() override {}
+  void ConvertTexture(TCacheEntry* entry, TCacheEntry* unconverted, const void* palette,
+                      TLUTFormat format) override
   {
   }
 
-  void CopyEFBToCacheEntry(RcTcacheEntry& entry, bool is_depth_copy,
-                           const MathUtil::Rectangle<int>& src_rect, bool scale_by_half,
-                           bool linear_filter, EFBCopyFormat dst_format, bool is_intensity,
-                           float gamma, bool clamp_top, bool clamp_bottom,
-                           const std::array<u32, 3>& filter_coefficients) override
+  void CopyEFB(u8* dst, const EFBCopyParams& params, u32 native_width, u32 bytes_per_row,
+               u32 num_blocks_y, u32 memory_stride, const EFBRectangle& src_rect,
+               bool scale_by_half) override
   {
+  }
+
+  void CopyEFBToCacheEntry(TCacheEntry* entry, bool is_depth_copy, const EFBRectangle& src_rect,
+                           bool scale_by_half, unsigned int cbuf_id, const float* colmat) override
+  {
+  }
+
+private:
+  std::unique_ptr<AbstractTexture> CreateTexture(const TextureConfig& config) override
+  {
+    return std::make_unique<NullTexture>(config);
   }
 };
 
-}  // namespace Null
+}  // Null name space

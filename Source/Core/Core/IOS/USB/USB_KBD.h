@@ -1,59 +1,58 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include <array>
 #include <queue>
 #include <string>
-#include <type_traits>
 
 #include "Common/CommonTypes.h"
 #include "Core/IOS/Device.h"
 #include "Core/IOS/IOS.h"
 
-namespace IOS::HLE
+namespace IOS
 {
-class USB_KBD : public EmulationDevice
+namespace HLE
+{
+namespace Device
+{
+class USB_KBD : public Device
 {
 public:
-  USB_KBD(EmulationKernel& ios, const std::string& device_name);
+  USB_KBD(Kernel& ios, const std::string& device_name);
 
-  std::optional<IPCReply> Open(const OpenRequest& request) override;
-  std::optional<IPCReply> Write(const ReadWriteRequest& request) override;
-  std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override;
+  ReturnCode Open(const OpenRequest& request) override;
+  IPCCommandResult Write(const ReadWriteRequest& request) override;
+  IPCCommandResult IOCtl(const IOCtlRequest& request) override;
   void Update() override;
 
 private:
-  enum class MessageType : u32
+  enum
   {
-    KeyboardConnect = 0,
-    KeyboardDisconnect = 1,
-    Event = 2
+    MSG_KBD_CONNECT = 0,
+    MSG_KBD_DISCONNECT = 1,
+    MSG_EVENT = 2
   };
-
-  using PressedKeyData = std::array<u8, 6>;
 
 #pragma pack(push, 1)
-  struct MessageData
+  struct SMessageData
   {
-    MessageType msg_type{};
-    u32 unk1 = 0;
-    u8 modifiers = 0;
-    u8 unk2 = 0;
-    PressedKeyData pressed_keys{};
+    u32 MsgType;
+    u32 Unk1;
+    u8 Modifiers;
+    u8 Unk2;
+    u8 PressedKeys[6];
 
-    MessageData(MessageType msg_type, u8 modifiers, PressedKeyData pressed_keys);
+    SMessageData(u32 msg_type, u8 modifiers, u8* pressed_keys);
   };
-  static_assert(std::is_trivially_copyable_v<MessageData>,
-                "MessageData must be trivially copyable, as it's copied into emulated memory.");
 #pragma pack(pop)
-  std::queue<MessageData> m_message_queue;
+  std::queue<SMessageData> m_MessageQueue;
 
-  std::array<bool, 256> m_old_key_buffer{};
-  u8 m_old_modifiers = 0;
+  bool m_OldKeyBuffer[256];
+  u8 m_OldModifiers;
 
-  bool IsKeyPressed(int key) const;
+  virtual bool IsKeyPressed(int _Key);
 
   // This stuff should probably die
   enum
@@ -61,6 +60,10 @@ private:
     KBD_LAYOUT_QWERTY = 0,
     KBD_LAYOUT_AZERTY = 1
   };
-  int m_keyboard_layout = KBD_LAYOUT_QWERTY;
+  int m_KeyboardLayout;
+  static u8 m_KeyCodesQWERTY[256];
+  static u8 m_KeyCodesAZERTY[256];
 };
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

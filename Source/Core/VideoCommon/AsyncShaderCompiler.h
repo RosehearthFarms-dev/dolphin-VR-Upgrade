@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -7,7 +8,6 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -42,16 +42,15 @@ public:
     return std::make_unique<T>(std::forward<Params>(params)...);
   }
 
-  // Queues a new work item to the compiler threads. The lower the priority, the sooner
-  // this work item will be compiled, relative to the other work items.
-  void QueueWorkItem(WorkItemPtr item, u32 priority);
+  void QueueWorkItem(WorkItemPtr item);
   void RetrieveWorkItems();
   bool HasPendingWork();
-  bool HasCompletedWork();
+
+  // Simpler version without progress updates.
+  void WaitUntilCompletion();
 
   // Calls progress_callback periodically, with completed_items, and total_items.
-  // Returns false if interrupted.
-  bool WaitUntilCompletion(const std::function<void(size_t, size_t)>& progress_callback);
+  void WaitUntilCompletion(const std::function<void(size_t, size_t)>& progress_callback);
 
   // Needed because of calling virtual methods in shutdown procedure.
   bool StartWorkerThreads(u32 num_worker_threads);
@@ -74,9 +73,7 @@ private:
   std::vector<std::thread> m_worker_threads;
   std::atomic_bool m_worker_thread_start_result{false};
 
-  // A multimap is used to store the work items. We can't use a priority_queue here, because
-  // there's no way to obtain a non-const reference, which we need for the unique_ptr.
-  std::multimap<u32, WorkItemPtr> m_pending_work;
+  std::deque<WorkItemPtr> m_pending_work;
   std::mutex m_pending_work_lock;
   std::condition_variable m_worker_thread_wake;
   std::atomic_size_t m_busy_workers{0};

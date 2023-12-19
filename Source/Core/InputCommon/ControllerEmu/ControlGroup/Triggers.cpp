@@ -1,12 +1,12 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "InputCommon/ControllerEmu/ControlGroup/Triggers.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <memory>
-#include <optional>
 #include <string>
 
 #include "Common/Common.h"
@@ -18,39 +18,15 @@ namespace ControllerEmu
 {
 Triggers::Triggers(const std::string& name_) : ControlGroup(name_, GroupType::Triggers)
 {
-  AddDeadzoneSetting(&m_deadzone_setting, 50);
+  numeric_settings.emplace_back(std::make_unique<NumericSetting>(_trans("Dead Zone"), 0, 0, 50));
 }
 
-Triggers::StateData Triggers::GetState() const
+void Triggers::GetState(ControlState* analog)
 {
   const size_t trigger_count = controls.size();
-  const ControlState deadzone = m_deadzone_setting.GetValue() / 100;
+  const ControlState deadzone = numeric_settings[0]->GetValue();
 
-  StateData result(trigger_count);
-  for (size_t i = 0; i < trigger_count; ++i)
-    result.data[i] = std::min(ApplyDeadzone(controls[i]->GetState(), deadzone), 1.0);
-
-  return result;
+  for (size_t i = 0; i < trigger_count; ++i, ++analog)
+    *analog = std::max(controls[i]->control_ref->State() - deadzone, 0.0) / (1 - deadzone);
 }
-
-Triggers::StateData Triggers::GetState(const InputOverrideFunction& override_func) const
-{
-  if (!override_func)
-    return GetState();
-
-  const size_t trigger_count = controls.size();
-  const ControlState deadzone = m_deadzone_setting.GetValue() / 100;
-
-  StateData result(trigger_count);
-  for (size_t i = 0; i < trigger_count; ++i)
-  {
-    ControlState state = ApplyDeadzone(controls[i]->GetState(), deadzone);
-    if (std::optional<ControlState> state_override = override_func(name, controls[i]->name, state))
-      state = *state_override;
-    result.data[i] = std::min(state, 1.0);
-  }
-
-  return result;
-}
-
 }  // namespace ControllerEmu

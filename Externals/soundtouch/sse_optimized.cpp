@@ -23,6 +23,13 @@
 ///
 ////////////////////////////////////////////////////////////////////////////////
 //
+// Last changed  : $Date: 2015-08-09 00:00:15 +0300 (Sun, 09 Aug 2015) $
+// File revision : $Revision: 4 $
+//
+// $Id: sse_optimized.cpp 226 2015-08-08 21:00:15Z oparviai $
+//
+////////////////////////////////////////////////////////////////////////////////
+//
 // License :
 //
 //  SoundTouch audio processing library
@@ -80,7 +87,7 @@ double TDStretchSSE::calcCrossCorr(const float *pV1, const float *pV2, double &a
     // Compile-time define SOUNDTOUCH_ALLOW_NONEXACT_SIMD_OPTIMIZATION is provided
     // for choosing if this little cheating is allowed.
 
-#ifdef ST_SIMD_AVOID_UNALIGNED
+#ifdef SOUNDTOUCH_ALLOW_NONEXACT_SIMD_OPTIMIZATION
     // Little cheating allowed, return valid correlation only for 
     // aligned locations, meaning every second round for stereo sound.
 
@@ -195,16 +202,16 @@ double TDStretchSSE::calcCrossCorrAccumulate(const float *pV1, const float *pV2,
 
 FIRFilterSSE::FIRFilterSSE() : FIRFilter()
 {
-    filterCoeffsAlign = nullptr;
-    filterCoeffsUnalign = nullptr;
+    filterCoeffsAlign = NULL;
+    filterCoeffsUnalign = NULL;
 }
 
 
 FIRFilterSSE::~FIRFilterSSE()
 {
     delete[] filterCoeffsUnalign;
-    filterCoeffsAlign = nullptr;
-    filterCoeffsUnalign = nullptr;
+    filterCoeffsAlign = NULL;
+    filterCoeffsUnalign = NULL;
 }
 
 
@@ -245,10 +252,10 @@ uint FIRFilterSSE::evaluateFilterStereo(float *dest, const float *source, uint n
 
     if (count < 2) return 0;
 
-    assert(source != nullptr);
-    assert(dest != nullptr);
+    assert(source != NULL);
+    assert(dest != NULL);
     assert((length % 8) == 0);
-    assert(filterCoeffsAlign != nullptr);
+    assert(filterCoeffsAlign != NULL);
     assert(((ulongptr)filterCoeffsAlign) % 16 == 0);
 
     // filter is evaluated for two stereo samples with each iteration, thus use of 'j += 2'

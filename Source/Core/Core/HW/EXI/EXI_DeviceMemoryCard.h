@@ -1,76 +1,50 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include <array>
 #include <functional>
 #include <memory>
-#include <string>
-#include <utility>
 
 #include "Core/HW/EXI/EXI_Device.h"
 
 class MemoryCardBase;
 class PointerWrap;
 
-namespace Core
-{
-class System;
-}
-namespace CoreTiming
-{
-class CoreTimingManager;
-}
-namespace Memcard
-{
-struct HeaderData;
-}
-
 namespace ExpansionInterface
 {
-enum class Slot : int;
-
-enum class AllowMovieFolder
-{
-  Yes,
-  No,
-};
-
 class CEXIMemoryCard : public IEXIDevice
 {
 public:
-  CEXIMemoryCard(Core::System& system, Slot slot, bool gci_folder,
-                 const Memcard::HeaderData& header_data);
-  ~CEXIMemoryCard() override;
+  CEXIMemoryCard(const int index, bool gciFolder);
+  virtual ~CEXIMemoryCard();
   void SetCS(int cs) override;
   bool IsInterruptSet() override;
   bool UseDelayedTransferCompletion() const override;
   bool IsPresent() const override;
   void DoState(PointerWrap& p) override;
-  void DMARead(u32 addr, u32 size) override;
-  void DMAWrite(u32 addr, u32 size) override;
+  IEXIDevice* FindDevice(TEXIDevices device_type, int customIndex = -1) override;
+  void DMARead(u32 _uAddr, u32 _uSize) override;
+  void DMAWrite(u32 _uAddr, u32 _uSize) override;
 
   // CoreTiming events need to be registered during boot since CoreTiming is DoState()-ed
   // before ExpansionInterface so we'll lose the save stated events if the callbacks are
   // not already registered first.
-  static void Init(CoreTiming::CoreTimingManager& core_timing);
+  static void Init();
   static void Shutdown();
 
-  static std::pair<std::string /* path */, bool /* migrate */>
-  GetGCIFolderPath(Slot card_slot, AllowMovieFolder allow_movie_folder);
-
 private:
-  void SetupGciFolder(const Memcard::HeaderData& header_data);
-  void SetupRawMemcard(u16 size_mb);
-  static void EventCompleteFindInstance(Core::System& system, u64 userdata,
+  void SetupGciFolder(u16 sizeMb);
+  void SetupRawMemcard(u16 sizeMb);
+  static void EventCompleteFindInstance(u64 userdata,
                                         std::function<void(CEXIMemoryCard*)> callback);
 
   // Scheduled when a command that required delayed end signaling is done.
-  static void CmdDoneCallback(Core::System& system, u64 userdata, s64 cyclesLate);
+  static void CmdDoneCallback(u64 userdata, s64 cyclesLate);
 
   // Scheduled when memory card is done transferring data
-  static void TransferCompleteCallback(Core::System& system, u64 userdata, s64 cyclesLate);
+  static void TransferCompleteCallback(u64 userdata, s64 cyclesLate);
 
   // Signals that the command that was previously executed is now done.
   void CmdDone();
@@ -81,40 +55,40 @@ private:
   // Variant of CmdDone which schedules an event later in the future to complete the command.
   void CmdDoneLater(u64 cycles);
 
-  enum class Command
+  enum
   {
-    NintendoID = 0x00,
-    ReadArray = 0x52,
-    ArrayToBuffer = 0x53,
-    SetInterrupt = 0x81,
-    WriteBuffer = 0x82,
-    ReadStatus = 0x83,
-    ReadID = 0x85,
-    ReadErrorBuffer = 0x86,
-    WakeUp = 0x87,
-    Sleep = 0x88,
-    ClearStatus = 0x89,
-    SectorErase = 0xF1,
-    PageProgram = 0xF2,
-    ExtraByteProgram = 0xF3,
-    ChipErase = 0xF4,
+    cmdNintendoID = 0x00,
+    cmdReadArray = 0x52,
+    cmdArrayToBuffer = 0x53,
+    cmdSetInterrupt = 0x81,
+    cmdWriteBuffer = 0x82,
+    cmdReadStatus = 0x83,
+    cmdReadID = 0x85,
+    cmdReadErrorBuffer = 0x86,
+    cmdWakeUp = 0x87,
+    cmdSleep = 0x88,
+    cmdClearStatus = 0x89,
+    cmdSectorErase = 0xF1,
+    cmdPageProgram = 0xF2,
+    cmdExtraByteProgram = 0xF3,
+    cmdChipErase = 0xF4,
   };
 
-  Slot m_card_slot;
+  int card_index;
   //! memory card state
 
   // STATE_TO_SAVE
-  int m_interrupt_switch;
-  bool m_interrupt_set;
-  Command m_command;
-  int m_status;
-  u32 m_position;
-  std::array<u8, 128> m_programming_buffer;
+  int interruptSwitch;
+  bool m_bInterruptSet;
+  int command;
+  int status;
+  u32 m_uPosition;
+  u8 programming_buffer[128];
   //! memory card parameters
-  unsigned int m_card_id;
-  unsigned int m_address;
-  u32 m_memory_card_size;
-  std::unique_ptr<MemoryCardBase> m_memory_card;
+  unsigned int card_id;
+  unsigned int address;
+  u32 memory_card_size;
+  std::unique_ptr<MemoryCardBase> memorycard;
 
 protected:
   void TransferByte(u8& byte) override;

@@ -31,9 +31,6 @@ do
         --stop-address=*)
             stop="${1##--stop-address=}"
             ;;
-        --no-show-raw-insn)
-            raw=
-            ;;
         --no-show-raw)
             raw=
             ;;

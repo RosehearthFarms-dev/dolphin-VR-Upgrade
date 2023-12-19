@@ -1,18 +1,26 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "AudioCommon/NullSoundStream.h"
 
-bool NullSound::Init()
+void NullSound::SoundLoop()
 {
-  return true;
 }
 
-bool NullSound::SetRunning(bool running)
+bool NullSound::Start()
 {
   return true;
 }
 
 void NullSound::SetVolume(int volume)
+{
+}
+
+void NullSound::Update()
+{
+}
+
+void NullSound::Stop()
 {
 }

@@ -1,33 +1,22 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <cstddef>
-#include <optional>
 #include <string>
 #include <vector>
 
 #include "Common/CommonTypes.h"
-#include "Core/PowerPC/Expression.h"
 
-namespace Core
-{
 class DebugInterface;
-}
-namespace Core
-{
-class System;
-}
 
 struct TBreakPoint
 {
   u32 address = 0;
   bool is_enabled = false;
   bool is_temporary = false;
-  bool log_on_hit = false;
-  bool break_on_hit = false;
-  std::optional<Expression> condition;
 };
 
 struct TMemCheck
@@ -35,7 +24,6 @@ struct TMemCheck
   u32 start_address = 0;
   u32 end_address = 0;
 
-  bool is_enabled = true;
   bool is_ranged = false;
 
   bool is_break_on_read = false;
@@ -46,24 +34,21 @@ struct TMemCheck
 
   u32 num_hits = 0;
 
-  std::optional<Expression> condition;
-
   // returns whether to break
-  bool Action(Core::System& system, Core::DebugInterface* debug_interface, u64 value, u32 addr,
-              bool write, size_t size, u32 pc);
+  bool Action(DebugInterface* dbg_interface, u32 value, u32 addr, bool write, size_t size, u32 pc);
+};
+
+struct TWatch
+{
+  std::string name;
+  u32 address = 0;
+  bool is_enabled = false;
 };
 
 // Code breakpoints.
 class BreakPoints
 {
 public:
-  explicit BreakPoints(Core::System& system);
-  BreakPoints(const BreakPoints& other) = delete;
-  BreakPoints(BreakPoints&& other) = delete;
-  BreakPoints& operator=(const BreakPoints& other) = delete;
-  BreakPoints& operator=(BreakPoints&& other) = delete;
-  ~BreakPoints();
-
   using TBreakPoints = std::vector<TBreakPoint>;
   using TBreakPointsStr = std::vector<std::string>;
 
@@ -73,18 +58,11 @@ public:
 
   // is address breakpoint
   bool IsAddressBreakPoint(u32 address) const;
-  bool IsBreakPointEnable(u32 adresss) const;
   bool IsTempBreakPoint(u32 address) const;
-  const TBreakPoint* GetBreakpoint(u32 address) const;
 
   // Add BreakPoint
-  void Add(u32 address, bool temp, bool break_on_hit, bool log_on_hit,
-           std::optional<Expression> condition);
   void Add(u32 address, bool temp = false);
-  void Add(TBreakPoint bp);
-
-  // Modify Breakpoint
-  bool ToggleBreakPoint(u32 address);
+  void Add(const TBreakPoint& bp);
 
   // Remove Breakpoint
   void Remove(u32 address);
@@ -93,20 +71,12 @@ public:
 
 private:
   TBreakPoints m_breakpoints;
-  Core::System& m_system;
 };
 
 // Memory breakpoints
 class MemChecks
 {
 public:
-  explicit MemChecks(Core::System& system);
-  MemChecks(const MemChecks& other) = delete;
-  MemChecks(MemChecks&& other) = delete;
-  MemChecks& operator=(const MemChecks& other) = delete;
-  MemChecks& operator=(MemChecks&& other) = delete;
-  ~MemChecks();
-
   using TMemChecks = std::vector<TMemCheck>;
   using TMemChecksStr = std::vector<std::string>;
 
@@ -114,19 +84,42 @@ public:
   TMemChecksStr GetStrings() const;
   void AddFromStrings(const TMemChecksStr& mc_strings);
 
-  void Add(TMemCheck memory_check);
-
-  bool ToggleBreakPoint(u32 address);
+  void Add(const TMemCheck& memory_check);
 
   // memory breakpoint
   TMemCheck* GetMemCheck(u32 address, size_t size = 1);
-  bool OverlapsMemcheck(u32 address, u32 length) const;
+  bool OverlapsMemcheck(u32 address, u32 length);
   void Remove(u32 address);
 
-  void Clear();
+  void Clear() { m_mem_checks.clear(); }
   bool HasAny() const { return !m_mem_checks.empty(); }
-
 private:
   TMemChecks m_mem_checks;
-  Core::System& m_system;
+};
+
+class Watches
+{
+public:
+  using TWatches = std::vector<TWatch>;
+  using TWatchesStr = std::vector<std::string>;
+
+  const TWatches& GetWatches() const { return m_watches; }
+  TWatchesStr GetStrings() const;
+  void AddFromStrings(const TWatchesStr& watch_strings);
+
+  bool IsAddressWatch(u32 address) const;
+
+  // Add watch
+  void Add(u32 address);
+  void Add(const TWatch& watch);
+
+  void Update(int count, u32 address);
+  void UpdateName(int count, const std::string name);
+
+  // Remove watch
+  void Remove(u32 address);
+  void Clear();
+
+private:
+  TWatches m_watches;
 };

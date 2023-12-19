@@ -1,5 +1,6 @@
 // Copyright 2015 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -14,7 +15,7 @@ namespace ControllerEmu
 {
 class ControllerEmu;
 class Buttons;
-}  // namespace ControllerEmu
+}
 
 enum Hotkey
 {
@@ -28,10 +29,6 @@ enum Hotkey
   HK_FULLSCREEN,
   HK_SCREENSHOT,
   HK_EXIT,
-  HK_UNLOCK_CURSOR,
-  HK_CENTER_MOUSE,
-  HK_ACTIVATE_CHAT,
-  HK_REQUEST_GOLF_CONTROL,
 
   HK_VOLUME_DOWN,
   HK_VOLUME_UP,
@@ -69,32 +66,10 @@ enum Hotkey
   HK_WIIMOTE3_CONNECT,
   HK_WIIMOTE4_CONNECT,
   HK_BALANCEBOARD_CONNECT,
-  HK_TOGGLE_SD_CARD,
-  HK_TOGGLE_USB_KEYBOARD,
-
-  HK_NEXT_WIIMOTE_PROFILE_1,
-  HK_PREV_WIIMOTE_PROFILE_1,
-  HK_NEXT_GAME_WIIMOTE_PROFILE_1,
-  HK_PREV_GAME_WIIMOTE_PROFILE_1,
-  HK_NEXT_WIIMOTE_PROFILE_2,
-  HK_PREV_WIIMOTE_PROFILE_2,
-  HK_NEXT_GAME_WIIMOTE_PROFILE_2,
-  HK_PREV_GAME_WIIMOTE_PROFILE_2,
-  HK_NEXT_WIIMOTE_PROFILE_3,
-  HK_PREV_WIIMOTE_PROFILE_3,
-  HK_NEXT_GAME_WIIMOTE_PROFILE_3,
-  HK_PREV_GAME_WIIMOTE_PROFILE_3,
-  HK_NEXT_WIIMOTE_PROFILE_4,
-  HK_PREV_WIIMOTE_PROFILE_4,
-  HK_NEXT_GAME_WIIMOTE_PROFILE_4,
-  HK_PREV_GAME_WIIMOTE_PROFILE_4,
 
   HK_TOGGLE_CROP,
   HK_TOGGLE_AR,
-  HK_TOGGLE_SKIP_EFB_ACCESS,
   HK_TOGGLE_EFBCOPIES,
-  HK_TOGGLE_XFBCOPIES,
-  HK_TOGGLE_IMMEDIATE_XFB,
   HK_TOGGLE_FOG,
   HK_TOGGLE_DUMPTEXTURES,
   HK_TOGGLE_TEXTURES,
@@ -102,11 +77,21 @@ enum Hotkey
   HK_INCREASE_IR,
   HK_DECREASE_IR,
 
-  HK_FREELOOK_TOGGLE,
+  HK_FREELOOK_DECREASE_SPEED,
+  HK_FREELOOK_INCREASE_SPEED,
+  HK_FREELOOK_RESET_SPEED,
+  HK_FREELOOK_UP,
+  HK_FREELOOK_DOWN,
+  HK_FREELOOK_LEFT,
+  HK_FREELOOK_RIGHT,
+  HK_FREELOOK_ZOOM_IN,
+  HK_FREELOOK_ZOOM_OUT,
+  HK_FREELOOK_RESET,
 
   HK_TOGGLE_STEREO_SBS,
   HK_TOGGLE_STEREO_TAB,
   HK_TOGGLE_STEREO_ANAGLYPH,
+  HK_TOGGLE_STEREO_3DVISION,
 
   HK_DECREASE_DEPTH,
   HK_INCREASE_DEPTH,
@@ -164,24 +149,43 @@ enum Hotkey
   HK_UNDO_SAVE_STATE,
   HK_SAVE_STATE_FILE,
   HK_LOAD_STATE_FILE,
-  HK_INCREMENT_SELECTED_STATE_SLOT,
-  HK_DECREMENT_SELECTED_STATE_SLOT,
 
-  HK_GBA_LOAD,
-  HK_GBA_UNLOAD,
-  HK_GBA_RESET,
+  VR_PERMANENT_CAMERA_FORWARD,
+  VR_PERMANENT_CAMERA_BACKWARD,
+  VR_LARGER_SCALE,
+  VR_SMALLER_SCALE,
+  VR_GLOBAL_LARGER_SCALE,
+  VR_GLOBAL_SMALLER_SCALE,
+  VR_CAMERA_TILT_UP,
+  VR_CAMERA_TILT_DOWN,
 
-  HK_GBA_VOLUME_DOWN,
-  HK_GBA_VOLUME_UP,
-  HK_GBA_TOGGLE_MUTE,
+  VR_HUD_FORWARD,
+  VR_HUD_BACKWARD,
+  VR_HUD_THICKER,
+  VR_HUD_THINNER,
+  VR_HUD_3D_CLOSER,
+  VR_HUD_3D_FURTHER,
 
-  HK_GBA_1X,
-  HK_GBA_2X,
-  HK_GBA_3X,
-  HK_GBA_4X,
+  VR_2D_SCREEN_LARGER,
+  VR_2D_SCREEN_SMALLER,
+  VR_2D_CAMERA_FORWARD,
+  VR_2D_CAMERA_BACKWARD,
+  // VR_2D_SCREEN_LEFT, //DOESN'T_EXIST_RIGHT_NOW?
+  // VR_2D_SCREEN_RIGHT, //DOESN'T_EXIST_RIGHT_NOW?
+  VR_2D_CAMERA_UP,
+  VR_2D_CAMERA_DOWN,
+  VR_2D_CAMERA_TILT_UP,
+  VR_2D_CAMERA_TILT_DOWN,
+  VR_2D_SCREEN_THICKER,
+  VR_2D_SCREEN_THINNER,
 
-  HK_SKYLANDERS_PORTAL,
-  HK_INFINITY_BASE,
+  VR_DEBUG_PREVIOUS_LAYER,
+  VR_DEBUG_NEXT_LAYER,
+  VR_DEBUG_SCENE,
+
+  VR_CONTROLLER_GRAB_WORLD,
+  VR_CONTROLLER_SCALE_WORLD,
+  VR_CONTROLLER_GRAB_HUD, 
 
   NUM_HOTKEYS,
 };
@@ -197,10 +201,6 @@ enum HotkeyGroup : int
   HKGP_PC,
   HKGP_BREAKPOINT,
   HKGP_WII,
-  HKGP_CONTROLLER_PROFILE_1,
-  HKGP_CONTROLLER_PROFILE_2,
-  HKGP_CONTROLLER_PROFILE_3,
-  HKGP_CONTROLLER_PROFILE_4,
   HKGP_GRAPHICS_TOGGLES,
   HKGP_IR,
   HKGP_FREELOOK,
@@ -211,17 +211,24 @@ enum HotkeyGroup : int
   HKGP_SELECT_STATE,
   HKGP_LOAD_LAST_STATE,
   HKGP_STATE_MISC,
-  HKGP_GBA_CORE,
-  HKGP_GBA_VOLUME,
-  HKGP_GBA_SIZE,
-  HKGP_USB_EMU,
+  HKGP_VR_CONFIG_CAMERA,
+  HKGP_VR_CONFIG_HUD,
+  HKGP_VR_CONFIG_2D,
+  HKGP_VR_GRAB,
 
   NUM_HOTKEY_GROUPS,
 };
 
+struct HotkeyGroupInfo
+{
+  std::string name;
+  Hotkey first;
+  Hotkey last;
+};
+
 struct HotkeyStatus
 {
-  std::array<u32, NUM_HOTKEY_GROUPS> button;
+  u32 button[NUM_HOTKEY_GROUPS];
   s8 err;
 };
 
@@ -231,17 +238,16 @@ public:
   HotkeyManager();
   ~HotkeyManager();
 
-  void GetInput(HotkeyStatus* hk, bool ignore_focus);
+  void GetInput(HotkeyStatus* const hk);
   std::string GetName() const override;
-  InputConfig* GetConfig() const override;
   ControllerEmu::ControlGroup* GetHotkeyGroup(HotkeyGroup group) const;
   int FindGroupByID(int id) const;
   int GetIndexForGroup(int group, int id) const;
   void LoadDefaults(const ControllerInterface& ciface) override;
 
 private:
-  std::array<ControllerEmu::Buttons*, NUM_HOTKEY_GROUPS> m_keys{};
-  std::array<ControllerEmu::ControlGroup*, NUM_HOTKEY_GROUPS> m_hotkey_groups{};
+  ControllerEmu::Buttons* m_keys[NUM_HOTKEY_GROUPS];
+  std::array<ControllerEmu::ControlGroup*, NUM_HOTKEY_GROUPS> m_hotkey_groups;
 };
 
 namespace HotkeyManagerEmu
@@ -252,8 +258,8 @@ void LoadConfig();
 
 InputConfig* GetConfig();
 ControllerEmu::ControlGroup* GetHotkeyGroup(HotkeyGroup group);
-void GetStatus(bool ignore_focus);
+void GetStatus();
 bool IsEnabled();
 void Enable(bool enable_toggle);
 bool IsPressed(int Id, bool held);
-}  // namespace HotkeyManagerEmu
+}

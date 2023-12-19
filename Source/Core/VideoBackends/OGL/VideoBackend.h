@@ -1,30 +1,36 @@
 // Copyright 2011 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <string>
 #include "VideoCommon/VideoBackendBase.h"
 
-class GLContext;
-
 namespace OGL
 {
 class VideoBackend : public VideoBackendBase
 {
-public:
-  bool Initialize(const WindowSystemInfo& wsi) override;
+  bool Initialize(void*) override;
+  bool InitializeOtherThread(void*, std::thread*) override;
   void Shutdown() override;
+  void ShutdownOtherThread() override;
 
   std::string GetName() const override;
   std::string GetDisplayName() const override;
 
-  void InitBackendInfo(const WindowSystemInfo& wsi) override;
+  void Video_Prepare() override;
+  void Video_PrepareOtherThread() override;
+  void Video_Cleanup() override;
+  void Video_CleanupOtherThread() override;
+  bool Video_CanDoAsync() override;
 
-  static constexpr const char* NAME = "OGL";
+  void InitBackendInfo() override;
+
+  unsigned int PeekMessages() override;
 
 private:
-  bool InitializeGLExtensions(GLContext* context);
-  bool FillBackendInfo(GLContext* context);
+  bool InitializeGLExtensions();
+  bool FillBackendInfo();
 };
-}  // namespace OGL
+}

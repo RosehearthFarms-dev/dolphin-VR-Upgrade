@@ -1,5 +1,6 @@
 // Copyright 2011 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -10,19 +11,23 @@ namespace DX11
 {
 class VideoBackend : public VideoBackendBase
 {
-public:
-  bool Initialize(const WindowSystemInfo& wsi) override;
+  bool Initialize(void*) override;
+  bool InitializeOtherThread(void*, std::thread*) override;
   void Shutdown() override;
+  void ShutdownOtherThread() override;
 
   std::string GetName() const override;
   std::string GetDisplayName() const override;
-  std::optional<std::string> GetWarningMessage() const override;
 
-  void InitBackendInfo(const WindowSystemInfo& wsi) override;
+  void Video_Prepare() override;
+  void Video_PrepareOtherThread() override;
+  void Video_Cleanup() override;
+  void Video_CleanupOtherThread() override;
 
-  static constexpr const char* NAME = "D3D";
+  void InitBackendInfo() override;
 
-private:
-  void FillBackendInfo();
+  unsigned int PeekMessages() override;
+
+  void* m_window_handle;
 };
-}  // namespace DX11
+}

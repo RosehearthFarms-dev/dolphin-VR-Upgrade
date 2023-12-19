@@ -35,7 +35,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
-#include <cctype>
 
 #include "ResourceLimits.h"
 
@@ -125,17 +124,6 @@ const TBuiltInResource DefaultTBuiltInResource = {
     /* .MaxCullDistances = */ 8,
     /* .MaxCombinedClipAndCullDistances = */ 8,
     /* .MaxSamples = */ 4,
-    /* .maxMeshOutputVerticesNV = */ 256,
-    /* .maxMeshOutputPrimitivesNV = */ 512,
-    /* .maxMeshWorkGroupSizeX_NV = */ 32,
-    /* .maxMeshWorkGroupSizeY_NV = */ 1,
-    /* .maxMeshWorkGroupSizeZ_NV = */ 1,
-    /* .maxTaskWorkGroupSizeX_NV = */ 32,
-    /* .maxTaskWorkGroupSizeY_NV = */ 1,
-    /* .maxTaskWorkGroupSizeZ_NV = */ 1,
-    /* .maxMeshViewCountNV = */ 4,
-    /* .maxDualSourceDrawBuffersEXT = */ 1,
-
     /* .limits = */ {
         /* .nonInductiveForLoops = */ 1,
         /* .whileLoops = */ 1,
@@ -235,16 +223,7 @@ std::string GetDefaultTBuiltInResourceString()
             << "MaxCullDistances "                          << DefaultTBuiltInResource.maxCullDistances << "\n"
             << "MaxCombinedClipAndCullDistances "           << DefaultTBuiltInResource.maxCombinedClipAndCullDistances << "\n"
             << "MaxSamples "                                << DefaultTBuiltInResource.maxSamples << "\n"
-            << "MaxMeshOutputVerticesNV "                   << DefaultTBuiltInResource.maxMeshOutputVerticesNV << "\n"
-            << "MaxMeshOutputPrimitivesNV "                 << DefaultTBuiltInResource.maxMeshOutputPrimitivesNV << "\n"
-            << "MaxMeshWorkGroupSizeX_NV "                  << DefaultTBuiltInResource.maxMeshWorkGroupSizeX_NV << "\n"
-            << "MaxMeshWorkGroupSizeY_NV "                  << DefaultTBuiltInResource.maxMeshWorkGroupSizeY_NV << "\n"
-            << "MaxMeshWorkGroupSizeZ_NV "                  << DefaultTBuiltInResource.maxMeshWorkGroupSizeZ_NV << "\n"
-            << "MaxTaskWorkGroupSizeX_NV "                  << DefaultTBuiltInResource.maxTaskWorkGroupSizeX_NV << "\n"
-            << "MaxTaskWorkGroupSizeY_NV "                  << DefaultTBuiltInResource.maxTaskWorkGroupSizeY_NV << "\n"
-            << "MaxTaskWorkGroupSizeZ_NV "                  << DefaultTBuiltInResource.maxTaskWorkGroupSizeZ_NV << "\n"
-            << "MaxMeshViewCountNV "                        << DefaultTBuiltInResource.maxMeshViewCountNV << "\n"
-            << "MaxDualSourceDrawBuffersEXT "               << DefaultTBuiltInResource.maxDualSourceDrawBuffersEXT << "\n"
+
             << "nonInductiveForLoops "                      << DefaultTBuiltInResource.limits.nonInductiveForLoops << "\n"
             << "whileLoops "                                << DefaultTBuiltInResource.limits.whileLoops << "\n"
             << "doWhileLoops "                              << DefaultTBuiltInResource.limits.doWhileLoops << "\n"
@@ -261,235 +240,205 @@ std::string GetDefaultTBuiltInResourceString()
 
 void DecodeResourceLimits(TBuiltInResource* resources, char* config)
 {
-    static const char* delims = " \t\n\r";
-
-    size_t pos     = 0;
-    std::string configStr(config);
-
-    while ((pos = configStr.find_first_not_of(delims, pos)) != std::string::npos) {
-        const size_t token_s = pos;
-        const size_t token_e = configStr.find_first_of(delims, token_s);
-        const size_t value_s = configStr.find_first_not_of(delims, token_e);
-        const size_t value_e = configStr.find_first_of(delims, value_s);
-        pos = value_e;
-
-        // Faster to use compare(), but prefering readability.
-        const std::string tokenStr = configStr.substr(token_s, token_e-token_s);
-        const std::string valueStr = configStr.substr(value_s, value_e-value_s);
-
-        if (value_s == std::string::npos || ! (valueStr[0] == '-' || isdigit(valueStr[0]))) {
-            printf("Error: '%s' bad .conf file.  Each name must be followed by one number.\n",
-                   valueStr.c_str());
+    const char* delims = " \t\n\r";
+    const char* token = strtok(config, delims);
+    while (token) {
+        const char* valueStr = strtok(0, delims);
+        if (valueStr == 0 || ! (valueStr[0] == '-' || (valueStr[0] >= '0' && valueStr[0] <= '9'))) {
+            printf("Error: '%s' bad .conf file.  Each name must be followed by one number.\n", valueStr ? valueStr : "");
             return;
         }
+        int value = atoi(valueStr);
 
-        const int value = std::atoi(valueStr.c_str());
-
-        if (tokenStr == "MaxLights")
+        if (strcmp(token, "MaxLights") == 0)
             resources->maxLights = value;
-        else if (tokenStr == "MaxClipPlanes")
+        else if (strcmp(token, "MaxClipPlanes") == 0)
             resources->maxClipPlanes = value;
-        else if (tokenStr == "MaxTextureUnits")
+        else if (strcmp(token, "MaxTextureUnits") == 0)
             resources->maxTextureUnits = value;
-        else if (tokenStr == "MaxTextureCoords")
+        else if (strcmp(token, "MaxTextureCoords") == 0)
             resources->maxTextureCoords = value;
-        else if (tokenStr == "MaxVertexAttribs")
+        else if (strcmp(token, "MaxVertexAttribs") == 0)
             resources->maxVertexAttribs = value;
-        else if (tokenStr == "MaxVertexUniformComponents")
+        else if (strcmp(token, "MaxVertexUniformComponents") == 0)
             resources->maxVertexUniformComponents = value;
-        else if (tokenStr == "MaxVaryingFloats")
+        else if (strcmp(token, "MaxVaryingFloats") == 0)
             resources->maxVaryingFloats = value;
-        else if (tokenStr == "MaxVertexTextureImageUnits")
+        else if (strcmp(token, "MaxVertexTextureImageUnits") == 0)
             resources->maxVertexTextureImageUnits = value;
-        else if (tokenStr == "MaxCombinedTextureImageUnits")
+        else if (strcmp(token, "MaxCombinedTextureImageUnits") == 0)
             resources->maxCombinedTextureImageUnits = value;
-        else if (tokenStr == "MaxTextureImageUnits")
+        else if (strcmp(token, "MaxTextureImageUnits") == 0)
             resources->maxTextureImageUnits = value;
-        else if (tokenStr == "MaxFragmentUniformComponents")
+        else if (strcmp(token, "MaxFragmentUniformComponents") == 0)
             resources->maxFragmentUniformComponents = value;
-        else if (tokenStr == "MaxDrawBuffers")
+        else if (strcmp(token, "MaxDrawBuffers") == 0)
             resources->maxDrawBuffers = value;
-        else if (tokenStr == "MaxVertexUniformVectors")
+        else if (strcmp(token, "MaxVertexUniformVectors") == 0)
             resources->maxVertexUniformVectors = value;
-        else if (tokenStr == "MaxVaryingVectors")
+        else if (strcmp(token, "MaxVaryingVectors") == 0)
             resources->maxVaryingVectors = value;
-        else if (tokenStr == "MaxFragmentUniformVectors")
+        else if (strcmp(token, "MaxFragmentUniformVectors") == 0)
             resources->maxFragmentUniformVectors = value;
-        else if (tokenStr == "MaxVertexOutputVectors")
+        else if (strcmp(token, "MaxVertexOutputVectors") == 0)
             resources->maxVertexOutputVectors = value;
-        else if (tokenStr == "MaxFragmentInputVectors")
+        else if (strcmp(token, "MaxFragmentInputVectors") == 0)
             resources->maxFragmentInputVectors = value;
-        else if (tokenStr == "MinProgramTexelOffset")
+        else if (strcmp(token, "MinProgramTexelOffset") == 0)
             resources->minProgramTexelOffset = value;
-        else if (tokenStr == "MaxProgramTexelOffset")
+        else if (strcmp(token, "MaxProgramTexelOffset") == 0)
             resources->maxProgramTexelOffset = value;
-        else if (tokenStr == "MaxClipDistances")
+        else if (strcmp(token, "MaxClipDistances") == 0)
             resources->maxClipDistances = value;
-        else if (tokenStr == "MaxComputeWorkGroupCountX")
+        else if (strcmp(token, "MaxComputeWorkGroupCountX") == 0)
             resources->maxComputeWorkGroupCountX = value;
-        else if (tokenStr == "MaxComputeWorkGroupCountY")
+        else if (strcmp(token, "MaxComputeWorkGroupCountY") == 0)
             resources->maxComputeWorkGroupCountY = value;
-        else if (tokenStr == "MaxComputeWorkGroupCountZ")
+        else if (strcmp(token, "MaxComputeWorkGroupCountZ") == 0)
             resources->maxComputeWorkGroupCountZ = value;
-        else if (tokenStr == "MaxComputeWorkGroupSizeX")
+        else if (strcmp(token, "MaxComputeWorkGroupSizeX") == 0)
             resources->maxComputeWorkGroupSizeX = value;
-        else if (tokenStr == "MaxComputeWorkGroupSizeY")
+        else if (strcmp(token, "MaxComputeWorkGroupSizeY") == 0)
             resources->maxComputeWorkGroupSizeY = value;
-        else if (tokenStr == "MaxComputeWorkGroupSizeZ")
+        else if (strcmp(token, "MaxComputeWorkGroupSizeZ") == 0)
             resources->maxComputeWorkGroupSizeZ = value;
-        else if (tokenStr == "MaxComputeUniformComponents")
+        else if (strcmp(token, "MaxComputeUniformComponents") == 0)
             resources->maxComputeUniformComponents = value;
-        else if (tokenStr == "MaxComputeTextureImageUnits")
+        else if (strcmp(token, "MaxComputeTextureImageUnits") == 0)
             resources->maxComputeTextureImageUnits = value;
-        else if (tokenStr == "MaxComputeImageUniforms")
+        else if (strcmp(token, "MaxComputeImageUniforms") == 0)
             resources->maxComputeImageUniforms = value;
-        else if (tokenStr == "MaxComputeAtomicCounters")
+        else if (strcmp(token, "MaxComputeAtomicCounters") == 0)
             resources->maxComputeAtomicCounters = value;
-        else if (tokenStr == "MaxComputeAtomicCounterBuffers")
+        else if (strcmp(token, "MaxComputeAtomicCounterBuffers") == 0)
             resources->maxComputeAtomicCounterBuffers = value;
-        else if (tokenStr == "MaxVaryingComponents")
+        else if (strcmp(token, "MaxVaryingComponents") == 0)
             resources->maxVaryingComponents = value;
-        else if (tokenStr == "MaxVertexOutputComponents")
+        else if (strcmp(token, "MaxVertexOutputComponents") == 0)
             resources->maxVertexOutputComponents = value;
-        else if (tokenStr == "MaxGeometryInputComponents")
+        else if (strcmp(token, "MaxGeometryInputComponents") == 0)
             resources->maxGeometryInputComponents = value;
-        else if (tokenStr == "MaxGeometryOutputComponents")
+        else if (strcmp(token, "MaxGeometryOutputComponents") == 0)
             resources->maxGeometryOutputComponents = value;
-        else if (tokenStr == "MaxFragmentInputComponents")
+        else if (strcmp(token, "MaxFragmentInputComponents") == 0)
             resources->maxFragmentInputComponents = value;
-        else if (tokenStr == "MaxImageUnits")
+        else if (strcmp(token, "MaxImageUnits") == 0)
             resources->maxImageUnits = value;
-        else if (tokenStr == "MaxCombinedImageUnitsAndFragmentOutputs")
+        else if (strcmp(token, "MaxCombinedImageUnitsAndFragmentOutputs") == 0)
             resources->maxCombinedImageUnitsAndFragmentOutputs = value;
-        else if (tokenStr == "MaxCombinedShaderOutputResources")
+        else if (strcmp(token, "MaxCombinedShaderOutputResources") == 0)
             resources->maxCombinedShaderOutputResources = value;
-        else if (tokenStr == "MaxImageSamples")
+        else if (strcmp(token, "MaxImageSamples") == 0)
             resources->maxImageSamples = value;
-        else if (tokenStr == "MaxVertexImageUniforms")
+        else if (strcmp(token, "MaxVertexImageUniforms") == 0)
             resources->maxVertexImageUniforms = value;
-        else if (tokenStr == "MaxTessControlImageUniforms")
+        else if (strcmp(token, "MaxTessControlImageUniforms") == 0)
             resources->maxTessControlImageUniforms = value;
-        else if (tokenStr == "MaxTessEvaluationImageUniforms")
+        else if (strcmp(token, "MaxTessEvaluationImageUniforms") == 0)
             resources->maxTessEvaluationImageUniforms = value;
-        else if (tokenStr == "MaxGeometryImageUniforms")
+        else if (strcmp(token, "MaxGeometryImageUniforms") == 0)
             resources->maxGeometryImageUniforms = value;
-        else if (tokenStr == "MaxFragmentImageUniforms")
+        else if (strcmp(token, "MaxFragmentImageUniforms") == 0)
             resources->maxFragmentImageUniforms = value;
-        else if (tokenStr == "MaxCombinedImageUniforms")
+        else if (strcmp(token, "MaxCombinedImageUniforms") == 0)
             resources->maxCombinedImageUniforms = value;
-        else if (tokenStr == "MaxGeometryTextureImageUnits")
+        else if (strcmp(token, "MaxGeometryTextureImageUnits") == 0)
             resources->maxGeometryTextureImageUnits = value;
-        else if (tokenStr == "MaxGeometryOutputVertices")
+        else if (strcmp(token, "MaxGeometryOutputVertices") == 0)
             resources->maxGeometryOutputVertices = value;
-        else if (tokenStr == "MaxGeometryTotalOutputComponents")
+        else if (strcmp(token, "MaxGeometryTotalOutputComponents") == 0)
             resources->maxGeometryTotalOutputComponents = value;
-        else if (tokenStr == "MaxGeometryUniformComponents")
+        else if (strcmp(token, "MaxGeometryUniformComponents") == 0)
             resources->maxGeometryUniformComponents = value;
-        else if (tokenStr == "MaxGeometryVaryingComponents")
+        else if (strcmp(token, "MaxGeometryVaryingComponents") == 0)
             resources->maxGeometryVaryingComponents = value;
-        else if (tokenStr == "MaxTessControlInputComponents")
+        else if (strcmp(token, "MaxTessControlInputComponents") == 0)
             resources->maxTessControlInputComponents = value;
-        else if (tokenStr == "MaxTessControlOutputComponents")
+        else if (strcmp(token, "MaxTessControlOutputComponents") == 0)
             resources->maxTessControlOutputComponents = value;
-        else if (tokenStr == "MaxTessControlTextureImageUnits")
+        else if (strcmp(token, "MaxTessControlTextureImageUnits") == 0)
             resources->maxTessControlTextureImageUnits = value;
-        else if (tokenStr == "MaxTessControlUniformComponents")
+        else if (strcmp(token, "MaxTessControlUniformComponents") == 0)
             resources->maxTessControlUniformComponents = value;
-        else if (tokenStr == "MaxTessControlTotalOutputComponents")
+        else if (strcmp(token, "MaxTessControlTotalOutputComponents") == 0)
             resources->maxTessControlTotalOutputComponents = value;
-        else if (tokenStr == "MaxTessEvaluationInputComponents")
+        else if (strcmp(token, "MaxTessEvaluationInputComponents") == 0)
             resources->maxTessEvaluationInputComponents = value;
-        else if (tokenStr == "MaxTessEvaluationOutputComponents")
+        else if (strcmp(token, "MaxTessEvaluationOutputComponents") == 0)
             resources->maxTessEvaluationOutputComponents = value;
-        else if (tokenStr == "MaxTessEvaluationTextureImageUnits")
+        else if (strcmp(token, "MaxTessEvaluationTextureImageUnits") == 0)
             resources->maxTessEvaluationTextureImageUnits = value;
-        else if (tokenStr == "MaxTessEvaluationUniformComponents")
+        else if (strcmp(token, "MaxTessEvaluationUniformComponents") == 0)
             resources->maxTessEvaluationUniformComponents = value;
-        else if (tokenStr == "MaxTessPatchComponents")
+        else if (strcmp(token, "MaxTessPatchComponents") == 0)
             resources->maxTessPatchComponents = value;
-        else if (tokenStr == "MaxPatchVertices")
+        else if (strcmp(token, "MaxPatchVertices") == 0)
             resources->maxPatchVertices = value;
-        else if (tokenStr == "MaxTessGenLevel")
+        else if (strcmp(token, "MaxTessGenLevel") == 0)
             resources->maxTessGenLevel = value;
-        else if (tokenStr == "MaxViewports")
+        else if (strcmp(token, "MaxViewports") == 0)
             resources->maxViewports = value;
-        else if (tokenStr == "MaxVertexAtomicCounters")
+        else if (strcmp(token, "MaxVertexAtomicCounters") == 0)
             resources->maxVertexAtomicCounters = value;
-        else if (tokenStr == "MaxTessControlAtomicCounters")
+        else if (strcmp(token, "MaxTessControlAtomicCounters") == 0)
             resources->maxTessControlAtomicCounters = value;
-        else if (tokenStr == "MaxTessEvaluationAtomicCounters")
+        else if (strcmp(token, "MaxTessEvaluationAtomicCounters") == 0)
             resources->maxTessEvaluationAtomicCounters = value;
-        else if (tokenStr == "MaxGeometryAtomicCounters")
+        else if (strcmp(token, "MaxGeometryAtomicCounters") == 0)
             resources->maxGeometryAtomicCounters = value;
-        else if (tokenStr == "MaxFragmentAtomicCounters")
+        else if (strcmp(token, "MaxFragmentAtomicCounters") == 0)
             resources->maxFragmentAtomicCounters = value;
-        else if (tokenStr == "MaxCombinedAtomicCounters")
+        else if (strcmp(token, "MaxCombinedAtomicCounters") == 0)
             resources->maxCombinedAtomicCounters = value;
-        else if (tokenStr == "MaxAtomicCounterBindings")
+        else if (strcmp(token, "MaxAtomicCounterBindings") == 0)
             resources->maxAtomicCounterBindings = value;
-        else if (tokenStr == "MaxVertexAtomicCounterBuffers")
+        else if (strcmp(token, "MaxVertexAtomicCounterBuffers") == 0)
             resources->maxVertexAtomicCounterBuffers = value;
-        else if (tokenStr == "MaxTessControlAtomicCounterBuffers")
+        else if (strcmp(token, "MaxTessControlAtomicCounterBuffers") == 0)
             resources->maxTessControlAtomicCounterBuffers = value;
-        else if (tokenStr == "MaxTessEvaluationAtomicCounterBuffers")
+        else if (strcmp(token, "MaxTessEvaluationAtomicCounterBuffers") == 0)
             resources->maxTessEvaluationAtomicCounterBuffers = value;
-        else if (tokenStr == "MaxGeometryAtomicCounterBuffers")
+        else if (strcmp(token, "MaxGeometryAtomicCounterBuffers") == 0)
             resources->maxGeometryAtomicCounterBuffers = value;
-        else if (tokenStr == "MaxFragmentAtomicCounterBuffers")
+        else if (strcmp(token, "MaxFragmentAtomicCounterBuffers") == 0)
             resources->maxFragmentAtomicCounterBuffers = value;
-        else if (tokenStr == "MaxCombinedAtomicCounterBuffers")
+        else if (strcmp(token, "MaxCombinedAtomicCounterBuffers") == 0)
             resources->maxCombinedAtomicCounterBuffers = value;
-        else if (tokenStr == "MaxAtomicCounterBufferSize")
+        else if (strcmp(token, "MaxAtomicCounterBufferSize") == 0)
             resources->maxAtomicCounterBufferSize = value;
-        else if (tokenStr == "MaxTransformFeedbackBuffers")
+        else if (strcmp(token, "MaxTransformFeedbackBuffers") == 0)
             resources->maxTransformFeedbackBuffers = value;
-        else if (tokenStr == "MaxTransformFeedbackInterleavedComponents")
+        else if (strcmp(token, "MaxTransformFeedbackInterleavedComponents") == 0)
             resources->maxTransformFeedbackInterleavedComponents = value;
-        else if (tokenStr == "MaxCullDistances")
+        else if (strcmp(token, "MaxCullDistances") == 0)
             resources->maxCullDistances = value;
-        else if (tokenStr == "MaxCombinedClipAndCullDistances")
+        else if (strcmp(token, "MaxCombinedClipAndCullDistances") == 0)
             resources->maxCombinedClipAndCullDistances = value;
-        else if (tokenStr == "MaxSamples")
+        else if (strcmp(token, "MaxSamples") == 0)
             resources->maxSamples = value;
-        else if (tokenStr == "MaxMeshOutputVerticesNV")
-            resources->maxMeshOutputVerticesNV = value;
-        else if (tokenStr == "MaxMeshOutputPrimitivesNV")
-            resources->maxMeshOutputPrimitivesNV = value;
-        else if (tokenStr == "MaxMeshWorkGroupSizeX_NV")
-            resources->maxMeshWorkGroupSizeX_NV = value;
-        else if (tokenStr == "MaxMeshWorkGroupSizeY_NV")
-            resources->maxMeshWorkGroupSizeY_NV = value;
-        else if (tokenStr == "MaxMeshWorkGroupSizeZ_NV")
-            resources->maxMeshWorkGroupSizeZ_NV = value;
-        else if (tokenStr == "MaxTaskWorkGroupSizeX_NV")
-            resources->maxTaskWorkGroupSizeX_NV = value;
-        else if (tokenStr == "MaxTaskWorkGroupSizeY_NV")
-            resources->maxTaskWorkGroupSizeY_NV = value;
-        else if (tokenStr == "MaxTaskWorkGroupSizeZ_NV")
-            resources->maxTaskWorkGroupSizeZ_NV = value;
-        else if (tokenStr == "MaxMeshViewCountNV")
-            resources->maxMeshViewCountNV = value;
-        else if (tokenStr == "nonInductiveForLoops")
+
+        else if (strcmp(token, "nonInductiveForLoops") == 0)
             resources->limits.nonInductiveForLoops = (value != 0);
-        else if (tokenStr == "whileLoops")
+        else if (strcmp(token, "whileLoops") == 0)
             resources->limits.whileLoops = (value != 0);
-        else if (tokenStr == "doWhileLoops")
+        else if (strcmp(token, "doWhileLoops") == 0)
             resources->limits.doWhileLoops = (value != 0);
-        else if (tokenStr == "generalUniformIndexing")
+        else if (strcmp(token, "generalUniformIndexing") == 0)
             resources->limits.generalUniformIndexing = (value != 0);
-        else if (tokenStr == "generalAttributeMatrixVectorIndexing")
+        else if (strcmp(token, "generalAttributeMatrixVectorIndexing") == 0)
             resources->limits.generalAttributeMatrixVectorIndexing = (value != 0);
-        else if (tokenStr == "generalVaryingIndexing")
+        else if (strcmp(token, "generalVaryingIndexing") == 0)
             resources->limits.generalVaryingIndexing = (value != 0);
-        else if (tokenStr == "generalSamplerIndexing")
+        else if (strcmp(token, "generalSamplerIndexing") == 0)
             resources->limits.generalSamplerIndexing = (value != 0);
-        else if (tokenStr == "generalVariableIndexing")
+        else if (strcmp(token, "generalVariableIndexing") == 0)
             resources->limits.generalVariableIndexing = (value != 0);
-        else if (tokenStr == "generalConstantMatrixVectorIndexing")
+        else if (strcmp(token, "generalConstantMatrixVectorIndexing") == 0)
             resources->limits.generalConstantMatrixVectorIndexing = (value != 0);
         else
-            printf("Warning: unrecognized limit (%s) in configuration file.\n", tokenStr.c_str());
+            printf("Warning: unrecognized limit (%s) in configuration file.\n", token);
 
+        token = strtok(0, delims);
     }
 }
 

@@ -1,42 +1,31 @@
-add_library(videoogl
-  GPUTimer.h
-  OGLBoundingBox.cpp
-  OGLBoundingBox.h
-  OGLConfig.cpp
-  OGLConfig.h
-  OGLGfx.cpp
-  OGLGfx.h
-  OGLMain.cpp
-  OGLNativeVertexFormat.cpp
-  OGLPerfQuery.cpp
-  OGLPerfQuery.h
-  OGLPipeline.cpp
-  OGLPipeline.h
-  OGLShader.cpp
-  OGLShader.h
-  OGLStreamBuffer.cpp
-  OGLStreamBuffer.h
+set(SRCS
+  BoundingBox.cpp
+  FramebufferManager.cpp
+  main.cpp
+  NativeVertexFormat.cpp
   OGLTexture.cpp
-  OGLTexture.h
-  OGLVertexManager.cpp
-  OGLVertexManager.h
+  PerfQuery.cpp
+  PostProcessing.cpp
   ProgramShaderCache.cpp
-  ProgramShaderCache.h
+  RasterFont.cpp
+  Render.cpp
   SamplerCache.cpp
-  SamplerCache.h
-  VideoBackend.h
+  StreamBuffer.cpp
+  TextureCache.cpp
+  TextureConverter.cpp
+  VertexManager.cpp
+  VROGL.cpp
 )
 
-target_link_libraries(videoogl
-PUBLIC
-  common
+set(LIBS ${LIBS}
   videocommon
-
-PRIVATE
+  SOIL
+  common
   ${X11_LIBRARIES}
 )
 
-if(MSVC)
-  # Add precompiled header
-  target_link_libraries(videoogl PRIVATE use_pch)
+if(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD|NetBSD")
+  set(LIBS ${LIBS} usbhid)
 endif()
+
+add_dolphin_library(videoogl "${SRCS}" "${LIBS}")

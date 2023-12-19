@@ -1,96 +1,112 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "Common/FileSearch.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <algorithm>
-#include <filesystem>
 #include <functional>
-#include <iterator>
-#include <system_error>
 
 #include "Common/CommonPaths.h"
-#include "Common/Logging/Log.h"
-#include "Common/StringUtil.h"
+#include "Common/FileSearch.h"
 
 #ifdef _MSC_VER
 #include <Windows.h>
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+#define HAS_STD_FILESYSTEM
 #else
-#ifdef ANDROID
-#include "jni/AndroidCommon/AndroidCommon.h"
-#endif
-
 #include <cstring>
 #include "Common/CommonFuncs.h"
 #include "Common/FileUtil.h"
 #endif
 
-namespace fs = std::filesystem;
-
 namespace Common
 {
+#ifndef HAS_STD_FILESYSTEM
+
+static std::vector<std::string>
+FileSearchWithTest(const std::vector<std::string>& directories, bool recursive,
+                   std::function<bool(const File::FSTEntry&)> callback)
+{
+  std::vector<std::string> result;
+  for (const std::string& directory : directories)
+  {
+    File::FSTEntry top = File::ScanDirectoryTree(directory, recursive);
+
+    std::function<void(File::FSTEntry&)> DoEntry;
+    DoEntry = [&](File::FSTEntry& entry) {
+      if (callback(entry))
+        result.push_back(entry.physicalName);
+      for (auto& child : entry.children)
+        DoEntry(child);
+    };
+    for (auto& child : top.children)
+      DoEntry(child);
+  }
+  // remove duplicates
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
+
 std::vector<std::string> DoFileSearch(const std::vector<std::string>& directories,
                                       const std::vector<std::string>& exts, bool recursive)
 {
-  const bool accept_all = exts.empty();
+  bool accept_all = exts.empty();
+  return FileSearchWithTest(directories, recursive, [&](const File::FSTEntry& entry) {
+    if (accept_all)
+      return true;
+    if (entry.isDirectory)
+      return false;
+    return std::any_of(exts.begin(), exts.end(), [&](const std::string& ext) {
+      const std::string& name = entry.virtualName;
+      return name.length() >= ext.length() &&
+             strcasecmp(name.c_str() + name.length() - ext.length(), ext.c_str()) == 0;
+    });
+  });
+}
+
+#else
+
+std::vector<std::string> DoFileSearch(const std::vector<std::string>& directories,
+                                      const std::vector<std::string>& exts, bool recursive)
+{
+  bool accept_all = exts.empty();
 
   std::vector<fs::path> native_exts;
   for (const auto& ext : exts)
-    native_exts.push_back(StringToPath(ext));
+    native_exts.push_back(fs::u8path(ext));
 
   // N.B. This avoids doing any copies
   auto ext_matches = [&native_exts](const fs::path& path) {
-    const std::basic_string_view<fs::path::value_type> native_path = path.native();
+    const auto& native_path = path.native();
     return std::any_of(native_exts.cbegin(), native_exts.cend(), [&native_path](const auto& ext) {
-      const auto compare_len = ext.native().length();
-      if (native_path.length() < compare_len)
-        return false;
-      const auto substr_to_compare = native_path.substr(native_path.length() - compare_len);
-#ifdef _WIN32
-      return CompareStringOrdinal(substr_to_compare.data(), static_cast<int>(compare_len),
-                                  ext.c_str(), static_cast<int>(compare_len), TRUE) == CSTR_EQUAL;
-#else
-      return strncasecmp(substr_to_compare.data(), ext.c_str(), compare_len) == 0;
-#endif
+      // TODO provide cross-platform compat for the comparison function, once more platforms
+      // support std::filesystem
+      int compare_len = static_cast<int>(ext.native().length());
+      return native_path.length() >= compare_len &&
+             CompareStringOrdinal(&native_path.c_str()[native_path.length() - compare_len],
+                                  compare_len, ext.c_str(), compare_len, TRUE) == CSTR_EQUAL;
     });
   };
 
   std::vector<std::string> result;
   auto add_filtered = [&](const fs::directory_entry& entry) {
     auto& path = entry.path();
-    if (accept_all || (!entry.is_directory() && ext_matches(path)))
-      result.emplace_back(PathToString(path));
+    if (accept_all || (ext_matches(path) && !fs::is_directory(path)))
+      result.emplace_back(path.u8string());
   };
   for (const auto& directory : directories)
   {
-#ifdef ANDROID
-    if (IsPathAndroidContent(directory))
+    if (recursive)
     {
-      const std::vector<std::string> partial_result =
-          DoFileSearchAndroidContent(directory, exts, recursive);
-
-      result.insert(result.end(), std::make_move_iterator(partial_result.begin()),
-                    std::make_move_iterator(partial_result.end()));
+      // TODO use fs::directory_options::follow_directory_symlink ?
+      for (auto& entry : fs::recursive_directory_iterator(fs::u8path(directory)))
+        add_filtered(entry);
     }
     else
-#endif
     {
-      fs::path directory_path = StringToPath(directory);
-      std::error_code error;
-      if (recursive)
-      {
-        for (auto it = fs::recursive_directory_iterator(std::move(directory_path), error);
-             it != fs::recursive_directory_iterator(); it.increment(error))
-          add_filtered(*it);
-      }
-      else
-      {
-        for (auto it = fs::directory_iterator(std::move(directory_path), error);
-             it != fs::directory_iterator(); it.increment(error))
-          add_filtered(*it);
-      }
-      if (error)
-        ERROR_LOG_FMT(COMMON, "{} error on {}: {}", __func__, directory, error.message());
+      for (auto& entry : fs::directory_iterator(fs::u8path(directory)))
+        add_filtered(entry);
     }
   }
 
@@ -104,13 +120,13 @@ std::vector<std::string> DoFileSearch(const std::vector<std::string>& directorie
   // std::filesystem uses the OS separator.
   constexpr fs::path::value_type os_separator = fs::path::preferred_separator;
   static_assert(os_separator == DIR_SEP_CHR || os_separator == '\\', "Unsupported path separator");
-  if constexpr (os_separator != DIR_SEP_CHR)
-  {
+  if (os_separator != DIR_SEP_CHR)
     for (auto& path : result)
       std::replace(path.begin(), path.end(), '\\', DIR_SEP_CHR);
-  }
 
   return result;
 }
+
+#endif
 
 }  // namespace Common

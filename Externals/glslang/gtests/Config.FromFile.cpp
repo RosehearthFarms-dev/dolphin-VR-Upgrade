@@ -51,12 +51,11 @@ TEST_P(ConfigTest, FromFile)
 {
     TestCaseSpec testCase = GetParam();
     GlslangResult result;
-    result.validationResult = true;
 
     // Get the contents for input shader and limit configurations.
     std::string shaderContents, configContents;
-    tryLoadFile(GlobalTestSettings.testRoot + "/" + testCase.input, "input", &shaderContents);
-    tryLoadFile(GlobalTestSettings.testRoot + "/" + testCase.config, "limits config", &configContents);
+    tryLoadFile(GLSLANG_TEST_DIRECTORY "/" + testCase.input, "input", &shaderContents);
+    tryLoadFile(GLSLANG_TEST_DIRECTORY "/" + testCase.config, "limits config", &configContents);
 
     // Decode limit configurations.
     TBuiltInResource resources = {};
@@ -87,7 +86,7 @@ TEST_P(ConfigTest, FromFile)
 
     // Check with expected results.
     const std::string expectedOutputFname =
-        GlobalTestSettings.testRoot + "/baseResults/" + testCase.output;
+        GLSLANG_TEST_DIRECTORY "/baseResults/" + testCase.output;
     std::string expectedOutput;
     tryLoadFile(expectedOutputFname, "expected output", &expectedOutput);
 
@@ -95,12 +94,12 @@ TEST_P(ConfigTest, FromFile)
 }
 
 // clang-format off
-INSTANTIATE_TEST_SUITE_P(
+INSTANTIATE_TEST_CASE_P(
     Glsl, ConfigTest,
     ::testing::ValuesIn(std::vector<TestCaseSpec>({
-        {"specExamples.vert", "baseResults/test.conf", "specExamplesConf.vert.out", (EShMessages)(EShMsgAST | EShMsgCascadingErrors)},
+        {"specExamples.vert", "baseResults/test.conf", "specExamples.vert.out", (EShMessages)(EShMsgAST | EShMsgCascadingErrors)},
         {"100Limits.vert", "100.conf", "100LimitsConf.vert.out", EShMsgCascadingErrors},
-    }))
+    })),
 );
 // clang-format on
 

@@ -1,23 +1,20 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
-
-#include <type_traits>
 
 #include "Common/Align.h"
 #include "Common/CommonTypes.h"
 
-#include "Core/PowerPC/MMU.h"
+#include "Core/HW/Memmap.h"
 #include "Core/PowerPC/PowerPC.h"
 
-namespace Core
-{
-class CPUThreadGuard;
-class System;
-}  // namespace Core
+#include <type_traits>
 
-namespace HLE::SystemVABI
+namespace HLE
+{
+namespace SystemVABI
 {
 // SFINAE
 template <typename T>
@@ -38,10 +35,8 @@ constexpr bool IS_ARG_REAL = std::is_floating_point<T>();
 class VAList
 {
 public:
-  explicit VAList(const Core::CPUThreadGuard& guard, u32 stack, u32 gpr = 3, u32 fpr = 1,
-                  u32 gpr_max = 10, u32 fpr_max = 8)
-      : m_guard(guard), m_gpr(gpr), m_fpr(fpr), m_gpr_max(gpr_max), m_fpr_max(fpr_max),
-        m_stack(stack)
+  explicit VAList(u32 stack, u32 gpr = 3, u32 fpr = 1, u32 gpr_max = 10, u32 fpr_max = 8)
+      : m_gpr(gpr), m_fpr(fpr), m_gpr_max(gpr_max), m_fpr_max(fpr_max), m_stack(stack)
   {
   }
   virtual ~VAList();
@@ -55,15 +50,16 @@ public:
 
     for (size_t i = 0; i < sizeof(T); i += 1, addr += 1)
     {
-      reinterpret_cast<u8*>(&obj)[i] = PowerPC::MMU::HostRead_U8(m_guard, addr);
+      reinterpret_cast<u8*>(&obj)[i] = PowerPC::HostRead_U8(addr);
     }
 
     return obj;
   }
 
   // 1 - arg_WORD
-  template <typename T, typename std::enable_if_t<IS_WORD<T>>* = nullptr>
-  T GetArg()
+  template <typename T>
+  typename std::enable_if<std::is_pointer<T>::value || (std::is_integral<T>::value && sizeof(T) <= 4), T>::type
+  GetArg()
   {
     static_assert(!std::is_pointer<T>(), "VAList doesn't support pointers");
     u64 value;
@@ -76,7 +72,7 @@ public:
     else
     {
       m_stack = Common::AlignUp(m_stack, 4);
-      value = PowerPC::MMU::HostRead_U32(m_guard, m_stack);
+      value = PowerPC::HostRead_U32(m_stack);
       m_stack += 4;
     }
 
@@ -84,8 +80,9 @@ public:
   }
 
   // 2 - arg_DOUBLEWORD
-  template <typename T, typename std::enable_if_t<IS_DOUBLE_WORD<T>>* = nullptr>
-  T GetArg()
+  template <typename T>
+  typename std::enable_if<std::is_integral<T>::value && sizeof(T) == 8, T>::type
+  GetArg()
   {
     u64 value;
 
@@ -99,7 +96,7 @@ public:
     else
     {
       m_stack = Common::AlignUp(m_stack, 8);
-      value = PowerPC::MMU::HostRead_U64(m_guard, m_stack);
+      value = PowerPC::HostRead_U64(m_stack);
       m_stack += 8;
     }
 
@@ -107,8 +104,9 @@ public:
   }
 
   // 3 - arg_ARGREAL
-  template <typename T, typename std::enable_if_t<IS_ARG_REAL<T>>* = nullptr>
-  T GetArg()
+  template <typename T>
+  typename std::enable_if<std::is_floating_point<T>::value, T>::type
+  GetArg()
   {
     double value;
 
@@ -120,7 +118,8 @@ public:
     else
     {
       m_stack = Common::AlignUp(m_stack, 8);
-      value = PowerPC::MMU::HostRead_F64(m_guard, m_stack);
+      const u64 integral = PowerPC::HostRead_U64(m_stack);
+      std::memcpy(&value, &integral, sizeof(double));
       m_stack += 8;
     }
 
@@ -135,7 +134,6 @@ public:
   }
 
 protected:
-  const Core::CPUThreadGuard& m_guard;
   u32 m_gpr = 3;
   u32 m_fpr = 1;
   const u32 m_gpr_max = 10;
@@ -156,7 +154,7 @@ private:
 class VAListStruct : public VAList
 {
 public:
-  explicit VAListStruct(const Core::CPUThreadGuard& guard, u32 address);
+  explicit VAListStruct(u32 address);
   ~VAListStruct() = default;
 
 private:
@@ -178,4 +176,5 @@ private:
   double GetFPR(u32 fpr) const override;
 };
 
-}  // namespace HLE::SystemVABI
+}  // namespace SystemVABI
+}  // namespace HLE

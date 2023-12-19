@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -9,8 +10,6 @@
 
 #include "Common/CommonTypes.h"
 
-namespace Profiler
-{
 struct BlockStat
 {
   BlockStat(u32 _addr, u64 c, u64 ticks, u64 run, u32 size)
@@ -28,9 +27,14 @@ struct BlockStat
 struct ProfileStats
 {
   std::vector<BlockStat> block_stats;
-  u64 cost_sum = 0;
-  u64 timecost_sum = 0;
-  u64 countsPerSec = 0;
+  u64 cost_sum;
+  u64 timecost_sum;
+  u64 countsPerSec;
 };
 
-}  // namespace Profiler
+namespace Profiler
+{
+extern bool g_ProfileBlocks;
+
+void WriteProfileResults(const std::string& filename);
+}

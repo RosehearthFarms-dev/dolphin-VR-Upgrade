@@ -1,5 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -10,8 +11,6 @@
 #include "Common/CommonTypes.h"
 #include "Common/MemoryUtil.h"
 
-namespace Common
-{
 // Everything that needs to generate code should inherit from this.
 // You get memory management for free, plus, you can use all emitter functions without
 // having to prefix them with gen-> or something similar.
@@ -54,7 +53,7 @@ public:
     region_size = size;
     total_region_size = size;
     region = static_cast<u8*>(Common::AllocateExecutableMemory(total_region_size));
-    T::SetCodePtr(region, region + size);
+    T::SetCodePtr(region);
   }
 
   // Always clear code space with breakpoints, so that if someone accidentally executes
@@ -68,7 +67,7 @@ public:
   // Call this when shutting down. Don't rely on the destructor, even though it'll do the job.
   void FreeCodeSpace()
   {
-    ASSERT(!m_is_child);
+    _assert_(!m_is_child);
     Common::FreeMemoryPages(region, total_region_size);
     region = nullptr;
     region_size = 0;
@@ -82,18 +81,13 @@ public:
   }
 
   bool IsInSpace(const u8* ptr) const { return ptr >= region && ptr < (region + region_size); }
-  void WriteProtect(bool allow_execute)
-  {
-    Common::WriteProtectMemory(region, region_size, allow_execute);
-  }
-  void UnWriteProtect(bool allow_execute)
-  {
-    Common::UnWriteProtectMemory(region, region_size, allow_execute);
-  }
-  void ResetCodePtr() { T::SetCodePtr(region, region + region_size); }
+  // Cannot currently be undone. Will write protect the entire code region.
+  // Start over if you need to change the code (call FreeCodeSpace(), AllocCodeSpace()).
+  void WriteProtect() { Common::WriteProtectMemory(region, region_size, true); }
+  void ResetCodePtr() { T::SetCodePtr(region); }
   size_t GetSpaceLeft() const
   {
-    ASSERT(static_cast<size_t>(T::GetCodePtr() - region) < region_size);
+    _assert_(static_cast<size_t>(T::GetCodePtr() - region) < region_size);
     return region_size - (T::GetCodePtr() - region);
   }
 
@@ -106,10 +100,9 @@ public:
   bool HasChildren() const { return region_size != total_region_size; }
   u8* AllocChildCodeSpace(size_t child_size)
   {
-    ASSERT_MSG(DYNA_REC, child_size < GetSpaceLeft(), "Insufficient space for child allocation.");
+    _assert_msg_(DYNA_REG, child_size < GetSpaceLeft(), "Insufficient space for child allocation.");
     u8* child_region = region + region_size - child_size;
     region_size -= child_size;
-    ResetCodePtr();
     return child_region;
   }
   void AddChildCodeSpace(CodeBlock* child, size_t child_size)
@@ -123,4 +116,3 @@ public:
     m_children.emplace_back(child);
   }
 };
-}  // namespace Common

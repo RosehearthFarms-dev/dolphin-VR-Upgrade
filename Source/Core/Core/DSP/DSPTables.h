@@ -1,17 +1,17 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // Additional copyrights go to Duddie (c) 2005 (duddie@walla.com)
 
 #pragma once
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
-#include <string_view>
+#include <string>
 
 #include "Core/DSP/DSPCommon.h"
-#include "Core/DSP/DSPCore.h"
+#include "Core/DSP/Jit/DSPEmitter.h"
 
 namespace DSP
 {
@@ -32,26 +32,29 @@ enum partype_t
   P_ADDR_I = 0x0005,
   P_ADDR_D = 0x0006,
   P_REG = 0x8000,
-  P_REG04 = P_REG | DSP_REG_IX0 << 8,
-  P_REG08 = P_REG | DSP_REG_WR0 << 8,
-  P_REG18 = P_REG | DSP_REG_AXL0 << 8,
-  P_REGM18 = P_REG | DSP_REG_AXL0 << 8 | 0x10,  // used in multiply instructions
-  P_REG19 = P_REG | DSP_REG_AXL1 << 8,
-  P_REGM19 = P_REG | DSP_REG_AXL1 << 8 | 0x10,  // used in multiply instructions
-  P_REG1A = P_REG | DSP_REG_AXH0 << 8 | 0x80,
+  P_REG04 = P_REG | 0x0400,  // IX
+  P_REG08 = P_REG | 0x0800,
+  P_REG18 = P_REG | 0x1800,
+  P_REGM18 = P_REG | 0x1810,  // used in multiply instructions
+  P_REG19 = P_REG | 0x1900,
+  P_REGM19 = P_REG | 0x1910,  // used in multiply instructions
+  P_REG1A = P_REG | 0x1a80,
   // P_ACC       = P_REG | 0x1c10, // used for global accum (gcdsptool's value)
-  P_ACCL = P_REG | DSP_REG_ACL0 << 8,          // used for low part of accum
-  P_REG1C = P_REG | DSP_REG_ACL0 << 8 | 0x10,  // gcdsptool calls this P_ACCLM
-  P_ACCM = P_REG | DSP_REG_ACM0 << 8,          // used for mid part of accum
+  P_ACCL = P_REG | 0x1c00,   // used for low part of accum
+  P_REG1C = P_REG | 0x1c10,  // gcdsptool calls this P_ACCLM
+  P_ACCM = P_REG | 0x1e00,   // used for mid part of accum
   // The following are not in gcdsptool
-  P_ACCM_D = P_REG | DSP_REG_ACM0 << 8 | 0x80,
-  P_ACC = P_REG | DSP_REG_ACC0_FULL << 8,  // used for full accum.
-  P_ACCH = P_REG | DSP_REG_ACH0 << 8,      // used for high part of accum
-  P_ACC_D = P_REG | DSP_REG_ACC0_FULL << 8 | 0x80,
-  P_AX = P_REG | DSP_REG_AX0_FULL << 8,
+  P_ACCM_D = P_REG | 0x1e80,
+  P_ACC = P_REG | 0x2000,  // used for full accum.
+  P_ACC_D = P_REG | 0x2080,
+  P_AX = P_REG | 0x2200,
   P_REGS_MASK = 0x03f80,  // gcdsptool's value = 0x01f80
   P_REF = P_REG | 0x4000,
   P_PRG = P_REF | P_REG,
+
+  // The following seem like junk:
+  // P_REG10     = P_REG | 0x1000,
+  // P_AX_D      = P_REG | 0x2280,
 };
 
 struct param2_t
@@ -65,9 +68,15 @@ struct param2_t
 
 struct DSPOPCTemplate
 {
+  using InterpreterFunction = void (*)(UDSPInstruction);
+  using JITFunction = void (DSP::JIT::x86::DSPEmitter::*)(UDSPInstruction);
+
   const char* name;
   u16 opcode;
   u16 opcode_mask;
+
+  InterpreterFunction intFunc;
+  JITFunction jitFunc;
 
   u8 size;
   u8 param_count;
@@ -79,8 +88,14 @@ struct DSPOPCTemplate
   bool updates_sr;
 };
 
+typedef DSPOPCTemplate opc_t;
+
 // Opcodes
 extern const DSPOPCTemplate cw;
+
+constexpr size_t WRITEBACK_LOG_SIZE = 5;
+extern std::array<u16, WRITEBACK_LOG_SIZE> writeBackLog;
+extern std::array<int, WRITEBACK_LOG_SIZE> writeBackLogIdx;
 
 // Predefined labels
 struct pdlabel_t
@@ -98,23 +113,18 @@ const char* pdregname(int val);
 const char* pdregnamelong(int val);
 
 void InitInstructionTable();
+void applyWriteBackLog();
+void zeroWriteBackLog();
+void zeroWriteBackLogPreserveAcc(u8 acc);
 
 // Used by the assembler and disassembler for info retrieval.
 const DSPOPCTemplate* FindOpInfoByOpcode(UDSPInstruction opcode);
-const DSPOPCTemplate* FindOpInfoByName(std::string_view name);
+const DSPOPCTemplate* FindOpInfoByName(const std::string& name);
 
 const DSPOPCTemplate* FindExtOpInfoByOpcode(UDSPInstruction opcode);
-const DSPOPCTemplate* FindExtOpInfoByName(std::string_view name);
+const DSPOPCTemplate* FindExtOpInfoByName(const std::string& name);
 
 // Used by the interpreter and JIT for instruction emulation
 const DSPOPCTemplate* GetOpTemplate(UDSPInstruction inst);
 const DSPOPCTemplate* GetExtOpTemplate(UDSPInstruction inst);
-
-template <typename T, size_t N>
-auto FindByOpcode(UDSPInstruction opcode, const std::array<T, N>& data)
-{
-  return std::find_if(data.cbegin(), data.cend(), [opcode](const auto& info) {
-    return (opcode & info.opcode_mask) == info.opcode;
-  });
-}
 }  // namespace DSP

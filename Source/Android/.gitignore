@@ -40,4 +40,3 @@ build/
 *.so
 *.iml
 build.properties
-baseline-prof.txt

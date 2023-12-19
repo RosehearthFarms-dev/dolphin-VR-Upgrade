@@ -1,13 +1,12 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "Common/Analytics.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <cmath>
 #include <cstdio>
 #include <string>
-#include <type_traits>
 
+#include "Common/Analytics.h"
 #include "Common/CommonTypes.h"
 #include "Common/StringUtil.h"
 #include "Common/Thread.h"
@@ -18,7 +17,11 @@ namespace
 {
 // Format version number, used as the first byte of every report sent.
 // Increment for any change to the wire format.
-constexpr u8 WIRE_FORMAT_VERSION = 1;
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+const u8 WIRE_FORMAT_VERSION = 0;
+#else
+constexpr u8 WIRE_FORMAT_VERSION = 0;
+#endif
 
 // Identifiers for the value types supported by the analytics reporting wire
 // format.
@@ -29,16 +32,7 @@ enum class TypeId : u8
   UINT = 2,
   SINT = 3,
   FLOAT = 4,
-
-  // Flags which can be combined with other types.
-  ARRAY = 0x80,
 };
-
-TypeId operator|(TypeId l, TypeId r)
-{
-  using ut = std::underlying_type_t<TypeId>;
-  return static_cast<TypeId>(static_cast<ut>(l) | static_cast<ut>(r));
-}
 
 void AppendBool(std::string* out, bool v)
 {
@@ -76,19 +70,15 @@ AnalyticsReportBuilder::AnalyticsReportBuilder()
   m_report.push_back(WIRE_FORMAT_VERSION);
 }
 
-void AnalyticsReportBuilder::AppendSerializedValue(std::string* report, std::string_view v)
+void AnalyticsReportBuilder::AppendSerializedValue(std::string* report, const std::string& v)
 {
   AppendType(report, TypeId::STRING);
   AppendBytes(report, reinterpret_cast<const u8*>(v.data()), static_cast<u32>(v.size()));
 }
 
-// We can't remove this overload despite the string_view overload due to the fact that
-// pointers can implicitly convert to bool, so if we removed the overload, then all
-// const char strings passed in would begin forwarding to the bool overload,
-// which is definitely not what we want to occur.
 void AnalyticsReportBuilder::AppendSerializedValue(std::string* report, const char* v)
 {
-  AppendSerializedValue(report, std::string_view(v));
+  AppendSerializedValue(report, std::string(v));
 }
 
 void AnalyticsReportBuilder::AppendSerializedValue(std::string* report, bool v)
@@ -126,15 +116,6 @@ void AnalyticsReportBuilder::AppendSerializedValue(std::string* report, float v)
   AppendBytes(report, reinterpret_cast<u8*>(&v), sizeof(v), false);
 }
 
-void AnalyticsReportBuilder::AppendSerializedValueVector(std::string* report,
-                                                         const std::vector<u32>& v)
-{
-  AppendType(report, TypeId::UINT | TypeId::ARRAY);
-  AppendVarInt(report, v.size());
-  for (u32 x : v)
-    AppendVarInt(report, x);
-}
-
 AnalyticsReporter::AnalyticsReporter()
 {
   m_reporter_thread = std::thread(&AnalyticsReporter::ThreadProc, this);
@@ -145,14 +126,27 @@ AnalyticsReporter::~AnalyticsReporter()
   // Set the exit request flag and wait for the thread to honor it.
   m_reporter_stop_request.Set();
   m_reporter_event.Set();
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+  // the join hangs forever on VS2013, so instead we wait for an event indicating the thread has
+  // finished, then terminate it
+  // don't display an error message when we crash, I don't know why we crash.
+  _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+  m_reporter_finished_event.WaitFor(std::chrono::milliseconds(1000));
+// TerminateThread(m_reporter_thread.native_handle(), 1);
+#else
   m_reporter_thread.join();
+#endif
 }
 
 void AnalyticsReporter::Send(AnalyticsReportBuilder&& report)
 {
 #if defined(USE_ANALYTICS) && USE_ANALYTICS
   // Put a bound on the size of the queue to avoid uncontrolled memory growth.
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+  const u32 QUEUE_SIZE_LIMIT = 25;
+#else
   constexpr u32 QUEUE_SIZE_LIMIT = 25;
+#endif
   if (m_reports_queue.Size() < QUEUE_SIZE_LIMIT)
   {
     m_reports_queue.Push(report.Consume());
@@ -169,6 +163,9 @@ void AnalyticsReporter::ThreadProc()
     m_reporter_event.Wait();
     if (m_reporter_stop_request.IsSet())
     {
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+      m_reporter_finished_event.Set();
+#endif
       return;
     }
 
@@ -190,6 +187,9 @@ void AnalyticsReporter::ThreadProc()
       // Recheck after each report sent.
       if (m_reporter_stop_request.IsSet())
       {
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+        m_reporter_finished_event.Set();
+#endif
         return;
       }
     }
@@ -202,7 +202,7 @@ void StdoutAnalyticsBackend::Send(std::string report)
          HexDump(reinterpret_cast<const u8*>(report.data()), report.size()).c_str());
 }
 
-HttpAnalyticsBackend::HttpAnalyticsBackend(std::string endpoint) : m_endpoint(std::move(endpoint))
+HttpAnalyticsBackend::HttpAnalyticsBackend(const std::string& endpoint) : m_endpoint(endpoint)
 {
 }
 
@@ -213,4 +213,5 @@ void HttpAnalyticsBackend::Send(std::string report)
   if (m_http.IsValid())
     m_http.Post(m_endpoint, report);
 }
+
 }  // namespace Common

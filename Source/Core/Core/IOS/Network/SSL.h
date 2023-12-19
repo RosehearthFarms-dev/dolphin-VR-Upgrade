@@ -1,5 +1,6 @@
 // Copyright 2011 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -18,12 +19,18 @@
 // clang-format on
 
 #include "Common/CommonTypes.h"
-#include "Core/IOS/Device.h"
 #include "Core/IOS/IOS.h"
+#include "Core/IOS/Device.h"
 
-namespace IOS::HLE
+namespace IOS
 {
-constexpr int NET_SSL_MAXINSTANCES = 4;
+namespace HLE
+{
+#define NET_SSL_MAXINSTANCES 4
+
+// TODO: remove this macro.
+#define SSLID_VALID(x)                                                                             \
+  (x >= 0 && x < NET_SSL_MAXINSTANCES && ::IOS::HLE::Device::NetSSL::_SSL[x].active)
 
 enum ssl_err_t : s32
 {
@@ -65,29 +72,31 @@ enum SSL_IOCTL
 
 struct WII_SSL
 {
-  mbedtls_ssl_context ctx{};
-  mbedtls_ssl_config config{};
-  mbedtls_ssl_session session{};
-  mbedtls_entropy_context entropy{};
-  mbedtls_ctr_drbg_context ctr_drbg{};
-  mbedtls_x509_crt cacert{};
-  mbedtls_x509_crt clicert{};
-  mbedtls_pk_context pk{};
-  int sockfd = -1;
-  int hostfd = -1;
+  mbedtls_ssl_context ctx;
+  mbedtls_ssl_config config;
+  mbedtls_ssl_session session;
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context ctr_drbg;
+  mbedtls_x509_crt cacert;
+  mbedtls_x509_crt clicert;
+  mbedtls_pk_context pk;
+  int sockfd;
+  int hostfd;
   std::string hostname;
-  bool active = false;
+  bool active;
 };
 
-class NetSSLDevice : public EmulationDevice
+namespace Device
+{
+class NetSSL : public Device
 {
 public:
-  NetSSLDevice(EmulationKernel& ios, const std::string& device_name);
+  NetSSL(Kernel& ios, const std::string& device_name);
 
-  virtual ~NetSSLDevice();
+  virtual ~NetSSL();
 
-  std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override;
-  std::optional<IPCReply> IOCtlV(const IOCtlVRequest& request) override;
+  IPCCommandResult IOCtl(const IOCtlRequest& request) override;
+  IPCCommandResult IOCtlV(const IOCtlVRequest& request) override;
 
   int GetSSLFreeID() const;
 
@@ -96,9 +105,6 @@ public:
 private:
   bool m_cert_error_shown = false;
 };
-
-constexpr bool IsSSLIDValid(int id)
-{
-  return (id >= 0 && id < NET_SSL_MAXINSTANCES && NetSSLDevice::_SSL[id].active);
-}
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

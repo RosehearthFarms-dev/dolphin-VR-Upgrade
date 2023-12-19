@@ -1,72 +1,106 @@
 // Copyright 2010 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <d3d11.h>
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
-#include <dxgi1_5.h>
-#include <fmt/format.h>
+#include <dxgi1_2.h>
 #include <vector>
-#include <wrl/client.h>
 
+#include "Common/Common.h"
 #include "Common/CommonTypes.h"
-#include "Common/HRWrap.h"
+#include "Common/MsgHandler.h"
+
+#define DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING (2048)
+#define DXGI_PRESENT_ALLOW_TEARING (0x00000200UL)
 
 namespace DX11
 {
-using Microsoft::WRL::ComPtr;
-class SwapChain;
+#define SAFE_RELEASE(x)                                                                            \
+  {                                                                                                \
+    if (x)                                                                                         \
+      (x)->Release();                                                                              \
+    (x) = nullptr;                                                                                 \
+  }
+#define SAFE_DELETE(x)                                                                             \
+  {                                                                                                \
+    delete (x);                                                                                    \
+    (x) = nullptr;                                                                                 \
+  }
+#define SAFE_DELETE_ARRAY(x)                                                                       \
+  {                                                                                                \
+    delete[](x);                                                                                   \
+    (x) = nullptr;                                                                                 \
+  }
+#define CHECK(cond, Message, ...)                                                                  \
+  if (!(cond))                                                                                     \
+  {                                                                                                \
+    PanicAlert(__FUNCTION__ " failed in %s at line %d: " Message, __FILE__, __LINE__,              \
+               __VA_ARGS__);                                                                       \
+  }
+
+class D3DTexture2D;
 
 namespace D3D
 {
-extern ComPtr<IDXGIFactory> dxgi_factory;
-extern ComPtr<ID3D11Device> device;
-extern ComPtr<ID3D11Device1> device1;
-extern ComPtr<ID3D11DeviceContext> context;
-extern D3D_FEATURE_LEVEL feature_level;
+HRESULT LoadDXGI();
+HRESULT LoadD3D();
+HRESULT LoadD3DCompiler();
+void UnloadDXGI();
+void UnloadD3D();
+void UnloadD3DCompiler();
 
-bool Create(u32 adapter_index, bool enable_debug_layer);
-void Destroy();
+D3D_FEATURE_LEVEL GetFeatureLevel(IDXGIAdapter* adapter);
+std::vector<DXGI_SAMPLE_DESC> EnumAAModes(IDXGIAdapter* adapter);
 
-// Returns a list of supported AA modes for the current device.
-std::vector<u32> GetAAModes(u32 adapter_index);
+HRESULT Create(HWND wnd);
+void Close();
 
-// Checks for support of the given texture format.
-bool SupportsTextureFormat(DXGI_FORMAT format);
+extern ID3D11Device* device;
+extern ID3D11Device1* device1;
+extern ID3D11DeviceContext* context;
+extern IDXGISwapChain* swapchain;
+extern HWND hWnd;
+extern bool bFrameInProgress;
 
-// Checks for logic op support.
-bool SupportsLogicOp(u32 adapter_index);
+void Reset();
+bool BeginFrame();
+void EndFrame();
+void Present();
+
+unsigned int GetBackBufferWidth();
+unsigned int GetBackBufferHeight();
+D3DTexture2D*& GetBackBuffer();
+const char* PixelShaderVersionString();
+const char* GeometryShaderVersionString();
+const char* VertexShaderVersionString();
+bool BGRATexturesSupported();
+bool AllowTearingSupported();
+
+u32 GetMaxTextureSize(D3D_FEATURE_LEVEL feature_level);
+
+HRESULT SetFullscreenState(bool enable_fullscreen);
+bool GetFullscreenState();
+
+// This function will assign a name to the given resource.
+// The DirectX debug layer will make it easier to identify resources that way,
+// e.g. when listing up all resources who have unreleased references.
+void SetDebugObjectName(ID3D11DeviceChild* resource, const char* name);
+std::string GetDebugObjectName(ID3D11DeviceChild* resource);
 
 }  // namespace D3D
 
-// Wrapper for HRESULT to be used with fmt.  Note that we can't create a fmt::formatter directly
-// for HRESULT as HRESULT is simply a typedef on long and not a distinct type.
-// Unlike the version in Common, this variant also knows to call GetDeviceRemovedReason if needed.
-struct DX11HRWrap
-{
-  constexpr explicit DX11HRWrap(HRESULT hr) : m_hr(hr) {}
-  const HRESULT m_hr;
-};
+typedef HRESULT(WINAPI* CREATEDXGIFACTORY)(REFIID, void**);
+extern CREATEDXGIFACTORY PCreateDXGIFactory, PCreateDXGIFactory1;
+typedef HRESULT(WINAPI* D3D11CREATEDEVICE)(IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE, UINT,
+                                           CONST D3D_FEATURE_LEVEL*, UINT, UINT, ID3D11Device**,
+                                           D3D_FEATURE_LEVEL*, ID3D11DeviceContext**);
+
+typedef HRESULT(WINAPI* D3DREFLECT)(LPCVOID, SIZE_T, REFIID, void**);
+extern D3DREFLECT PD3DReflect;
+extern pD3DCompile PD3DCompile;
 
 }  // namespace DX11
-
-template <>
-struct fmt::formatter<DX11::DX11HRWrap>
-{
-  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
-  template <typename FormatContext>
-  auto format(const DX11::DX11HRWrap& hr, FormatContext& ctx) const
-  {
-    if (hr.m_hr == DXGI_ERROR_DEVICE_REMOVED && DX11::D3D::device != nullptr)
-    {
-      return fmt::format_to(ctx.out(), "{}\nDevice removal reason: {}", Common::HRWrap(hr.m_hr),
-                            Common::HRWrap(DX11::D3D::device->GetDeviceRemovedReason()));
-    }
-    else
-    {
-      return fmt::format_to(ctx.out(), "{}", Common::HRWrap(hr.m_hr));
-    }
-  }
-};

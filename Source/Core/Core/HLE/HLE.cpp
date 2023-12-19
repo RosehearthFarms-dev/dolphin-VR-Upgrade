@@ -1,18 +1,15 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/HLE/HLE.h"
 
 #include <algorithm>
-#include <array>
 #include <map>
 
 #include "Common/CommonTypes.h"
-#include "Common/Config/Config.h"
 
-#include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
-#include "Core/Core.h"
 #include "Core/GeckoCode.h"
 #include "Core/HLE/HLE_Misc.h"
 #include "Core/HLE/HLE_OS.h"
@@ -20,102 +17,109 @@
 #include "Core/IOS/ES/ES.h"
 #include "Core/PowerPC/PPCSymbolDB.h"
 #include "Core/PowerPC/PowerPC.h"
-#include "Core/System.h"
 
 namespace HLE
 {
-// Map addresses to the HLE hook index
-static std::map<u32, u32> s_hooked_addresses;
+using namespace PowerPC;
+
+typedef void (*TPatchFunction)();
+
+static std::map<u32, u32> s_original_instructions;
+
+enum
+{
+  HLE_RETURNTYPE_BLR = 0,
+  HLE_RETURNTYPE_RFI = 1,
+};
+
+struct SPatch
+{
+  char m_szPatchName[128];
+  TPatchFunction PatchFunction;
+  HookType type;
+  HookFlag flags;
+};
 
 // clang-format off
-constexpr std::array<Hook, 23> os_patches{{
-    // Placeholder, os_patches[0] is the "non-existent function" index
-    {"FAKE_TO_SKIP_0",               HLE_Misc::UnimplementedFunction,       HookType::Replace, HookFlag::Generic},
+static const SPatch OSPatches[] = {
+    // Placeholder, OSPatches[0] is the "non-existent function" index
+    {"FAKE_TO_SKIP_0",               HLE_Misc::UnimplementedFunction,       HLE_HOOK_REPLACE, HLE_TYPE_GENERIC},
+
+    {"PanicAlert",                   HLE_Misc::HLEPanicAlert,               HLE_HOOK_REPLACE, HLE_TYPE_DEBUG},
 
     // Name doesn't matter, installed in CBoot::BootUp()
-    {"HBReload",                     HLE_Misc::HBReload,                    HookType::Replace, HookFlag::Fixed},
+    {"HBReload",                     HLE_Misc::HBReload,                    HLE_HOOK_REPLACE, HLE_TYPE_GENERIC},
 
     // Debug/OS Support
-    {"OSPanic",                      HLE_OS::HLE_OSPanic,                   HookType::Replace, HookFlag::Debug},
+    {"OSPanic",                      HLE_OS::HLE_OSPanic,                   HLE_HOOK_REPLACE, HLE_TYPE_DEBUG},
 
     // This needs to be put before vprintf (because vprintf is called indirectly by this)
-    {"JUTWarningConsole_f",          HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
+    {"JUTWarningConsole_f",          HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
 
-    {"OSReport",                     HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
-    {"DEBUGPrint",                   HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
-    {"WUD_DEBUGPrint",               HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
-    {"__DSP_debug_printf",           HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
-    {"vprintf",                      HLE_OS::HLE_GeneralDebugVPrint,        HookType::Start,   HookFlag::Debug},
-    {"printf",                       HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
-    {"vdprintf",                     HLE_OS::HLE_LogVDPrint,                HookType::Start,   HookFlag::Debug},
-    {"dprintf",                      HLE_OS::HLE_LogDPrint,                 HookType::Start,   HookFlag::Debug},
-    {"vfprintf",                     HLE_OS::HLE_LogVFPrint,                HookType::Start,   HookFlag::Debug},
-    {"fprintf",                      HLE_OS::HLE_LogFPrint,                 HookType::Start,   HookFlag::Debug},
-    {"nlPrintf",                     HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
-    {"DWC_Printf",                   HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
-    {"RANK_Printf",                  HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug},
-    {"puts",                         HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug}, // gcc-optimized printf?
-    {"___blank",                     HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Debug}, // used for early init things (normally)
-    {"__write_console",              HLE_OS::HLE_write_console,             HookType::Start,   HookFlag::Debug}, // used by sysmenu (+more?)
+    {"OSReport",                     HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"DEBUGPrint",                   HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"WUD_DEBUGPrint",               HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"vprintf",                      HLE_OS::HLE_GeneralDebugVPrint,        HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"printf",                       HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"vdprintf",                     HLE_OS::HLE_LogVDPrint,                HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"dprintf",                      HLE_OS::HLE_LogDPrint,                 HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"vfprintf",                     HLE_OS::HLE_LogVFPrint,                HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"fprintf",                      HLE_OS::HLE_LogFPrint,                 HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"nlPrintf",                     HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"puts",                         HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG}, // gcc-optimized printf?
+    {"___blank",                     HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG}, // used for early init things (normally)
+    {"__write_console",              HLE_OS::HLE_write_console,             HLE_HOOK_START,   HLE_TYPE_DEBUG}, // used by sysmenu (+more?)
 
-    {"GeckoCodehandler",             HLE_Misc::GeckoCodeHandlerICacheFlush, HookType::Start,   HookFlag::Fixed},
-    {"GeckoHandlerReturnTrampoline", HLE_Misc::GeckoReturnTrampoline,       HookType::Replace, HookFlag::Fixed},
-    {"AppLoaderReport",              HLE_OS::HLE_GeneralDebugPrint,         HookType::Start,   HookFlag::Fixed} // apploader needs OSReport-like function
-}};
+    {"GeckoCodehandler",             HLE_Misc::GeckoCodeHandlerICacheFlush, HLE_HOOK_START,   HLE_TYPE_FIXED},
+    {"GeckoHandlerReturnTrampoline", HLE_Misc::GeckoReturnTrampoline,       HLE_HOOK_REPLACE, HLE_TYPE_FIXED},
+    {"AppLoaderReport",              HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_REPLACE, HLE_TYPE_FIXED} // apploader needs OSReport-like function
+};
+
+static const SPatch OSBreakPoints[] = {
+    {"FAKE_TO_SKIP_0", HLE_Misc::UnimplementedFunction, HLE_HOOK_START, HLE_TYPE_GENERIC},
+};
 // clang-format on
 
-void Patch(Core::System& system, u32 addr, std::string_view func_name)
+void Patch(u32 addr, const char* hle_func_name)
 {
-  auto& ppc_state = system.GetPPCState();
-  for (u32 i = 1; i < os_patches.size(); ++i)
+  for (u32 i = 1; i < ArraySize(OSPatches); ++i)
   {
-    if (os_patches[i].name == func_name)
+    if (!strcmp(OSPatches[i].m_szPatchName, hle_func_name))
     {
-      s_hooked_addresses[addr] = i;
-      ppc_state.iCache.Invalidate(addr);
+      s_original_instructions[addr] = i;
+      PowerPC::ppcState.iCache.Invalidate(addr);
       return;
     }
   }
 }
 
-void PatchFixedFunctions(Core::System& system)
+void PatchFixedFunctions()
 {
-  // MIOS puts patch data in low MEM1 (0x1800-0x3000) for its own use.
-  // Overwriting data in this range can cause the IPL to crash when launching games
-  // that get patched by MIOS. See https://bugs.dolphin-emu.org/issues/11952 for more info.
-  // Not applying the Gecko HLE patches means that Gecko codes will not work under MIOS,
-  // but this is better than the alternative of having specific games crash.
-  if (SConfig::GetInstance().m_is_mios)
-    return;
-
   // HLE jump to loader (homebrew).  Disabled when Gecko is active as it interferes with the code
   // handler
-  if (!Config::AreCheatsEnabled())
+  if (!SConfig::GetInstance().bEnableCheats)
   {
-    Patch(system, 0x80001800, "HBReload");
-    auto& memory = system.GetMemory();
-    memory.CopyToEmu(0x00001804, "STUBHAXX", 8);
+    Patch(0x80001800, "HBReload");
+    Memory::CopyToEmu(0x00001804, "STUBHAXX", 8);
   }
 
   // Not part of the binary itself, but either we or Gecko OS might insert
   // this, and it doesn't clear the icache properly.
-  Patch(system, Gecko::ENTRY_POINT, "GeckoCodehandler");
+  Patch(Gecko::ENTRY_POINT, "GeckoCodehandler");
   // This has to always be installed even if cheats are not enabled because of the possiblity of
   // loading a savestate where PC is inside the code handler while cheats are disabled.
-  Patch(system, Gecko::HLE_TRAMPOLINE_ADDRESS, "GeckoHandlerReturnTrampoline");
+  Patch(Gecko::HLE_TRAMPOLINE_ADDRESS, "GeckoHandlerReturnTrampoline");
 }
 
-void PatchFunctions(Core::System& system)
+void PatchFunctions()
 {
-  auto& ppc_state = system.GetPPCState();
-
   // Remove all hooks that aren't fixed address hooks
-  for (auto i = s_hooked_addresses.begin(); i != s_hooked_addresses.end();)
+  for (auto i = s_original_instructions.begin(); i != s_original_instructions.end();)
   {
-    if (os_patches[i->second].flags != HookFlag::Fixed)
+    if (OSPatches[i->second].flags != HLE_TYPE_FIXED)
     {
-      ppc_state.iCache.Invalidate(i->first);
-      i = s_hooked_addresses.erase(i);
+      PowerPC::ppcState.iCache.Invalidate(i->first);
+      i = s_original_instructions.erase(i);
     }
     else
     {
@@ -123,127 +127,116 @@ void PatchFunctions(Core::System& system)
     }
   }
 
-  for (u32 i = 1; i < os_patches.size(); ++i)
+  for (u32 i = 1; i < ArraySize(OSPatches); ++i)
   {
     // Fixed hooks don't map to symbols
-    if (os_patches[i].flags == HookFlag::Fixed)
+    if (OSPatches[i].flags == HLE_TYPE_FIXED)
       continue;
 
-    for (const auto& symbol : g_symbolDB.GetSymbolsFromName(os_patches[i].name))
+    for (const auto& symbol : g_symbolDB.GetSymbolsFromName(OSPatches[i].m_szPatchName))
     {
       for (u32 addr = symbol->address; addr < symbol->address + symbol->size; addr += 4)
       {
-        s_hooked_addresses[addr] = i;
-        ppc_state.iCache.Invalidate(addr);
+        s_original_instructions[addr] = i;
+        PowerPC::ppcState.iCache.Invalidate(addr);
       }
-      INFO_LOG_FMT(OSHLE, "Patching {} {:08x}", os_patches[i].name, symbol->address);
+      INFO_LOG(OSHLE, "Patching %s %08x", OSPatches[i].m_szPatchName, symbol->address);
     }
   }
+
+  if (SConfig::GetInstance().bEnableDebugging)
+  {
+    for (size_t i = 1; i < ArraySize(OSBreakPoints); ++i)
+    {
+      for (const auto& symbol : g_symbolDB.GetSymbolsFromName(OSBreakPoints[i].m_szPatchName))
+      {
+        PowerPC::breakpoints.Add(symbol->address, false);
+        INFO_LOG(OSHLE, "Adding BP to %s %08x", OSBreakPoints[i].m_szPatchName, symbol->address);
+      }
+    }
+  }
+
+  // CBreakPoints::AddBreakPoint(0x8000D3D0, false);
 }
 
 void Clear()
 {
-  s_hooked_addresses.clear();
+  s_original_instructions.clear();
 }
 
-void Reload(Core::System& system)
+void Reload()
 {
   Clear();
-  PatchFixedFunctions(system);
-  PatchFunctions(system);
+  PatchFixedFunctions();
+  PatchFunctions();
 }
 
-void Execute(const Core::CPUThreadGuard& guard, u32 current_pc, u32 hook_index)
+void Execute(u32 _CurrentPC, u32 _Instruction)
 {
-  hook_index &= 0xFFFFF;
-  if (hook_index > 0 && hook_index < os_patches.size())
+  unsigned int FunctionIndex = _Instruction & 0xFFFFF;
+  if (FunctionIndex > 0 && FunctionIndex < ArraySize(OSPatches))
   {
-    os_patches[hook_index].function(guard);
+    OSPatches[FunctionIndex].PatchFunction();
   }
   else
   {
-    PanicAlertFmt("HLE system tried to call an undefined HLE function {}.", hook_index);
+    PanicAlert("HLE system tried to call an undefined HLE function %i.", FunctionIndex);
   }
+
+  // _dbg_assert_msg_(HLE,NPC == LR, "Broken HLE function (doesn't set NPC)",
+  // OSPatches[pos].m_szPatchName);
 }
 
-void ExecuteFromJIT(u32 current_pc, u32 hook_index)
+u32 GetFunctionIndex(u32 address)
 {
-  ASSERT(Core::IsCPUThread());
-  Core::CPUThreadGuard guard(Core::System::GetInstance());
-  Execute(guard, current_pc, hook_index);
+  auto iter = s_original_instructions.find(address);
+  return (iter != s_original_instructions.end()) ? iter->second : 0;
 }
 
-u32 GetHookByAddress(u32 address)
+u32 GetFirstFunctionIndex(u32 address)
 {
-  auto iter = s_hooked_addresses.find(address);
-  return (iter != s_hooked_addresses.end()) ? iter->second : 0;
+  u32 index = GetFunctionIndex(address);
+  auto first = std::find_if(
+      s_original_instructions.begin(), s_original_instructions.end(),
+      [=](const auto& entry) { return entry.second == index && entry.first < address; });
+  return first == std::end(s_original_instructions) ? index : 0;
 }
 
-u32 GetHookByFunctionAddress(u32 address)
+int GetFunctionTypeByIndex(u32 index)
 {
-  const u32 index = GetHookByAddress(address);
-  // Fixed hooks use a fixed address and don't patch the whole function
-  if (index == 0 || os_patches[index].flags == HookFlag::Fixed)
-    return index;
-
-  const auto symbol = g_symbolDB.GetSymbolFromAddr(address);
-  return (symbol && symbol->address == address) ? index : 0;
+  return OSPatches[index].type;
 }
 
-HookType GetHookTypeByIndex(u32 index)
+int GetFunctionFlagsByIndex(u32 index)
 {
-  return os_patches[index].type;
+  return OSPatches[index].flags;
 }
 
-HookFlag GetHookFlagsByIndex(u32 index)
+bool IsEnabled(int flags)
 {
-  return os_patches[index].flags;
+  return flags != HLE::HLE_TYPE_DEBUG || SConfig::GetInstance().bEnableDebugging ||
+         PowerPC::GetMode() == PowerPC::CoreMode::Interpreter;
 }
 
-TryReplaceFunctionResult TryReplaceFunction(u32 address)
+u32 UnPatch(const std::string& patch_name)
 {
-  const u32 hook_index = GetHookByFunctionAddress(address);
-  if (hook_index == 0)
-    return {};
-
-  const HookType type = GetHookTypeByIndex(hook_index);
-  if (type != HookType::Start && type != HookType::Replace)
-    return {};
-
-  const HookFlag flags = GetHookFlagsByIndex(hook_index);
-  if (!IsEnabled(flags))
-    return {};
-
-  return {type, hook_index};
-}
-
-bool IsEnabled(HookFlag flag)
-{
-  return flag != HLE::HookFlag::Debug || Config::IsDebuggingEnabled() ||
-         Core::System::GetInstance().GetPowerPC().GetMode() == PowerPC::CoreMode::Interpreter;
-}
-
-u32 UnPatch(Core::System& system, std::string_view patch_name)
-{
-  const auto patch = std::find_if(std::begin(os_patches), std::end(os_patches),
-                                  [&](const Hook& p) { return patch_name == p.name; });
-  if (patch == std::end(os_patches))
+  auto* patch = std::find_if(std::begin(OSPatches), std::end(OSPatches),
+                             [&](const SPatch& p) { return patch_name == p.m_szPatchName; });
+  if (patch == std::end(OSPatches))
     return 0;
 
-  auto& ppc_state = system.GetPPCState();
-
-  if (patch->flags == HookFlag::Fixed)
+  if (patch->flags == HLE_TYPE_FIXED)
   {
-    const u32 patch_idx = static_cast<u32>(std::distance(os_patches.begin(), patch));
+    u32 patch_idx = static_cast<u32>(patch - OSPatches);
     u32 addr = 0;
     // Reverse search by OSPatch key instead of address
-    for (auto i = s_hooked_addresses.begin(); i != s_hooked_addresses.end();)
+    for (auto i = s_original_instructions.begin(); i != s_original_instructions.end();)
     {
       if (i->second == patch_idx)
       {
         addr = i->first;
-        ppc_state.iCache.Invalidate(i->first);
-        i = s_hooked_addresses.erase(i);
+        PowerPC::ppcState.iCache.Invalidate(i->first);
+        i = s_original_instructions.erase(i);
       }
       else
       {
@@ -254,13 +247,13 @@ u32 UnPatch(Core::System& system, std::string_view patch_name)
   }
 
   const auto& symbols = g_symbolDB.GetSymbolsFromName(patch_name);
-  if (!symbols.empty())
+  if (symbols.size())
   {
     const auto& symbol = symbols[0];
     for (u32 addr = symbol->address; addr < symbol->address + symbol->size; addr += 4)
     {
-      s_hooked_addresses.erase(addr);
-      ppc_state.iCache.Invalidate(addr);
+      s_original_instructions.erase(addr);
+      PowerPC::ppcState.iCache.Invalidate(addr);
     }
     return symbol->address;
   }
@@ -268,22 +261,18 @@ u32 UnPatch(Core::System& system, std::string_view patch_name)
   return 0;
 }
 
-u32 UnpatchRange(Core::System& system, u32 start_addr, u32 end_addr)
+bool UnPatch(u32 addr, const std::string& name)
 {
-  auto& ppc_state = system.GetPPCState();
+  auto itr = s_original_instructions.find(addr);
+  if (itr == s_original_instructions.end())
+    return false;
 
-  u32 count = 0;
+  if (!name.empty() && name != OSPatches[itr->second].m_szPatchName)
+    return false;
 
-  auto i = s_hooked_addresses.lower_bound(start_addr);
-  while (i != s_hooked_addresses.end() && i->first < end_addr)
-  {
-    INFO_LOG_FMT(OSHLE, "Unpatch HLE hooks [{:08x};{:08x}): {} at {:08x}", start_addr, end_addr,
-                 os_patches[i->second].name, i->first);
-    ppc_state.iCache.Invalidate(i->first);
-    i = s_hooked_addresses.erase(i);
-    count += 1;
-  }
-
-  return count;
+  s_original_instructions.erase(itr);
+  PowerPC::ppcState.iCache.Invalidate(addr);
+  return true;
 }
-}  // namespace HLE
+
+}  // end of namespace HLE

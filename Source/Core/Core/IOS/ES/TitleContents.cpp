@@ -1,24 +1,29 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/IOS/ES/ES.h"
 
+#include <cinttypes>
+#include <utility>
 #include <vector>
 
 #include "Common/Logging/Log.h"
+#include "Common/MsgHandler.h"
 #include "Core/HW/Memmap.h"
 #include "Core/IOS/ES/Formats.h"
-#include "Core/IOS/FS/FileSystemProxy.h"
-#include "Core/IOS/Uids.h"
-#include "Core/System.h"
 
-namespace IOS::HLE
+namespace IOS
 {
-s32 ESCore::OpenContent(const ES::TMDReader& tmd, u16 content_index, u32 uid, Ticks ticks)
+namespace HLE
+{
+namespace Device
+{
+s32 ES::OpenContent(const IOS::ES::TMDReader& tmd, u16 content_index, u32 uid)
 {
   const u64 title_id = tmd.GetTitleId();
 
-  ES::Content content;
+  IOS::ES::Content content;
   if (!tmd.GetContent(content_index, &content))
     return ES_EINVAL;
 
@@ -28,73 +33,60 @@ s32 ESCore::OpenContent(const ES::TMDReader& tmd, u16 content_index, u32 uid, Ti
     if (entry.m_opened)
       continue;
 
-    const std::string path = GetContentPath(title_id, content, ticks);
-    auto fd = m_ios.GetFSCore().Open(PID_KERNEL, PID_KERNEL, path, FS::Mode::Read, {}, ticks);
-    if (fd.Get() < 0)
-      return fd.Get();
+    if (!entry.m_file.Open(GetContentPath(title_id, content), "rb"))
+      return FS_ENOENT;
 
     entry.m_opened = true;
-    entry.m_fd = fd.Release();
+    entry.m_position = 0;
     entry.m_content = content;
     entry.m_title_id = title_id;
     entry.m_uid = uid;
-    INFO_LOG_FMT(IOS_ES,
-                 "OpenContent: title ID {:016x}, UID {:#x}, content {:08x} (index {}) -> CFD {}",
-                 title_id, uid, content.id, content_index, i);
+    INFO_LOG(IOS_ES, "OpenContent: title ID %016" PRIx64 ", UID 0x%x, CFD %zu", title_id, uid, i);
     return static_cast<s32>(i);
   }
 
   return FS_EFDEXHAUSTED;
 }
 
-IPCReply ESDevice::OpenContent(u32 uid, const IOCtlVRequest& request)
+IPCCommandResult ES::OpenContent(u32 uid, const IOCtlVRequest& request)
 {
-  return MakeIPCReply(IPC_OVERHEAD_TICKS, [&](Ticks ticks) -> s32 {
-    if (!request.HasNumberOfValidVectors(3, 0) || request.in_vectors[0].size != sizeof(u64) ||
-        request.in_vectors[1].size != sizeof(ES::TicketView) ||
-        request.in_vectors[2].size != sizeof(u32))
-    {
-      return ES_EINVAL;
-    }
+  if (!request.HasNumberOfValidVectors(3, 0) || request.in_vectors[0].size != sizeof(u64) ||
+      request.in_vectors[1].size != sizeof(IOS::ES::TicketView) ||
+      request.in_vectors[2].size != sizeof(u32))
+  {
+    return GetDefaultReply(ES_EINVAL);
+  }
 
-    auto& system = GetSystem();
-    auto& memory = system.GetMemory();
-    const u64 title_id = memory.Read_U64(request.in_vectors[0].address);
-    const u32 content_index = memory.Read_U32(request.in_vectors[2].address);
-    // TODO: check the ticket view, check permissions.
+  const u64 title_id = Memory::Read_U64(request.in_vectors[0].address);
+  const u32 content_index = Memory::Read_U32(request.in_vectors[2].address);
+  // TODO: check the ticket view, check permissions.
 
-    const auto tmd = m_core.FindInstalledTMD(title_id, ticks);
-    if (!tmd.IsValid())
-      return FS_ENOENT;
+  const auto tmd = FindInstalledTMD(title_id);
+  if (!tmd.IsValid())
+    return GetDefaultReply(FS_ENOENT);
 
-    return m_core.OpenContent(tmd, content_index, uid, ticks);
-  });
+  return GetDefaultReply(OpenContent(tmd, content_index, uid));
 }
 
-IPCReply ESDevice::OpenActiveTitleContent(u32 caller_uid, const IOCtlVRequest& request)
+IPCCommandResult ES::OpenActiveTitleContent(u32 caller_uid, const IOCtlVRequest& request)
 {
-  return MakeIPCReply(IPC_OVERHEAD_TICKS, [&](Ticks ticks) -> s32 {
-    if (!request.HasNumberOfValidVectors(1, 0) || request.in_vectors[0].size != sizeof(u32))
-      return ES_EINVAL;
+  if (!request.HasNumberOfValidVectors(1, 0) || request.in_vectors[0].size != sizeof(u32))
+    return GetDefaultReply(ES_EINVAL);
 
-    auto& system = GetSystem();
-    auto& memory = system.GetMemory();
-    const u32 content_index = memory.Read_U32(request.in_vectors[0].address);
+  const u32 content_index = Memory::Read_U32(request.in_vectors[0].address);
 
-    if (!m_core.m_title_context.active)
-      return ES_EINVAL;
+  if (!m_title_context.active)
+    return GetDefaultReply(ES_EINVAL);
 
-    ES::UIDSys uid_map{GetEmulationKernel().GetFSCore()};
-    const u32 uid = uid_map.GetOrInsertUIDForTitle(m_core.m_title_context.tmd.GetTitleId());
-    ticks.Add(uid_map.GetTicks());
-    if (caller_uid != 0 && caller_uid != uid)
-      return ES_EACCES;
+  IOS::ES::UIDSys uid_map{Common::FROM_SESSION_ROOT};
+  const u32 uid = uid_map.GetOrInsertUIDForTitle(m_title_context.tmd.GetTitleId());
+  if (caller_uid != 0 && caller_uid != uid)
+    return GetDefaultReply(ES_EACCES);
 
-    return m_core.OpenContent(m_core.m_title_context.tmd, content_index, caller_uid, ticks);
-  });
+  return GetDefaultReply(OpenContent(m_title_context.tmd, content_index, caller_uid));
 }
 
-s32 ESCore::ReadContent(u32 cfd, u8* buffer, u32 size, u32 uid, Ticks ticks)
+s32 ES::ReadContent(u32 cfd, u8* buffer, u32 size, u32 uid)
 {
   if (cfd >= m_content_table.size())
     return ES_EINVAL;
@@ -105,28 +97,36 @@ s32 ESCore::ReadContent(u32 cfd, u8* buffer, u32 size, u32 uid, Ticks ticks)
   if (!entry.m_opened)
     return IPC_EINVAL;
 
-  return m_ios.GetFSCore().Read(entry.m_fd, buffer, size, {}, ticks);
+  // XXX: make this reuse the FS code... ES just does a simple "IOS_Read" call here
+  //      instead of all this duplicated filesystem logic.
+
+  if (entry.m_position + size > entry.m_file.GetSize())
+    size = static_cast<u32>(entry.m_file.GetSize()) - entry.m_position;
+
+  entry.m_file.Seek(entry.m_position, SEEK_SET);
+  if (!entry.m_file.ReadBytes(buffer, size))
+  {
+    ERROR_LOG(IOS_ES, "ES: failed to read %u bytes from %u!", size, entry.m_position);
+    return ES_SHORT_READ;
+  }
+
+  entry.m_position += size;
+  return size;
 }
 
-IPCReply ESDevice::ReadContent(u32 uid, const IOCtlVRequest& request)
+IPCCommandResult ES::ReadContent(u32 uid, const IOCtlVRequest& request)
 {
-  return MakeIPCReply(IPC_OVERHEAD_TICKS, [&](Ticks ticks) -> s32 {
-    if (!request.HasNumberOfValidVectors(1, 1) || request.in_vectors[0].size != sizeof(u32))
-      return ES_EINVAL;
+  if (!request.HasNumberOfValidVectors(1, 1) || request.in_vectors[0].size != sizeof(u32))
+    return GetDefaultReply(ES_EINVAL);
 
-    auto& system = GetSystem();
-    auto& memory = system.GetMemory();
-    const u32 cfd = memory.Read_U32(request.in_vectors[0].address);
-    const u32 size = request.io_vectors[0].size;
-    const u32 addr = request.io_vectors[0].address;
+  const u32 cfd = Memory::Read_U32(request.in_vectors[0].address);
+  const u32 size = request.io_vectors[0].size;
+  const u32 addr = request.io_vectors[0].address;
 
-    INFO_LOG_FMT(IOS_ES, "ReadContent(uid={:#x}, cfd={}, size={}, addr={:08x})", uid, cfd, size,
-                 addr);
-    return m_core.ReadContent(cfd, memory.GetPointer(addr), size, uid, ticks);
-  });
+  return GetDefaultReply(ReadContent(cfd, Memory::GetPointer(addr), size, uid));
 }
 
-s32 ESCore::CloseContent(u32 cfd, u32 uid, Ticks ticks)
+ReturnCode ES::CloseContent(u32 cfd, u32 uid)
 {
   if (cfd >= m_content_table.size())
     return ES_EINVAL;
@@ -137,26 +137,21 @@ s32 ESCore::CloseContent(u32 cfd, u32 uid, Ticks ticks)
   if (!entry.m_opened)
     return IPC_EINVAL;
 
-  m_ios.GetFSCore().Close(entry.m_fd, ticks);
   entry = {};
-  INFO_LOG_FMT(IOS_ES, "CloseContent: CFD {}", cfd);
+  INFO_LOG(IOS_ES, "CloseContent: CFD %u", cfd);
   return IPC_SUCCESS;
 }
 
-IPCReply ESDevice::CloseContent(u32 uid, const IOCtlVRequest& request)
+IPCCommandResult ES::CloseContent(u32 uid, const IOCtlVRequest& request)
 {
-  return MakeIPCReply(IPC_OVERHEAD_TICKS, [&](Ticks ticks) -> s32 {
-    if (!request.HasNumberOfValidVectors(1, 0) || request.in_vectors[0].size != sizeof(u32))
-      return ES_EINVAL;
+  if (!request.HasNumberOfValidVectors(1, 0) || request.in_vectors[0].size != sizeof(u32))
+    return GetDefaultReply(ES_EINVAL);
 
-    auto& system = GetSystem();
-    auto& memory = system.GetMemory();
-    const u32 cfd = memory.Read_U32(request.in_vectors[0].address);
-    return m_core.CloseContent(cfd, uid, ticks);
-  });
+  const u32 cfd = Memory::Read_U32(request.in_vectors[0].address);
+  return GetDefaultReply(CloseContent(cfd, uid));
 }
 
-s32 ESCore::SeekContent(u32 cfd, u32 offset, SeekMode mode, u32 uid, Ticks ticks)
+s32 ES::SeekContent(u32 cfd, u32 offset, SeekMode mode, u32 uid)
 {
   if (cfd >= m_content_table.size())
     return ES_EINVAL;
@@ -167,22 +162,39 @@ s32 ESCore::SeekContent(u32 cfd, u32 offset, SeekMode mode, u32 uid, Ticks ticks
   if (!entry.m_opened)
     return IPC_EINVAL;
 
-  return m_ios.GetFSCore().Seek(entry.m_fd, offset, static_cast<FS::SeekMode>(mode), ticks);
+  // XXX: This should be a simple IOS_Seek.
+  switch (mode)
+  {
+  case SeekMode::IOS_SEEK_SET:
+    entry.m_position = offset;
+    break;
+
+  case SeekMode::IOS_SEEK_CUR:
+    entry.m_position += offset;
+    break;
+
+  case SeekMode::IOS_SEEK_END:
+    entry.m_position = static_cast<u32>(entry.m_content.size) + offset;
+    break;
+
+  default:
+    return FS_EINVAL;
+  }
+
+  return entry.m_position;
 }
 
-IPCReply ESDevice::SeekContent(u32 uid, const IOCtlVRequest& request)
+IPCCommandResult ES::SeekContent(u32 uid, const IOCtlVRequest& request)
 {
-  return MakeIPCReply(IPC_OVERHEAD_TICKS, [&](Ticks ticks) -> s32 {
-    if (!request.HasNumberOfValidVectors(3, 0))
-      return ES_EINVAL;
+  if (!request.HasNumberOfValidVectors(3, 0))
+    return GetDefaultReply(ES_EINVAL);
 
-    auto& system = GetSystem();
-    auto& memory = system.GetMemory();
-    const u32 cfd = memory.Read_U32(request.in_vectors[0].address);
-    const u32 offset = memory.Read_U32(request.in_vectors[1].address);
-    const auto mode = static_cast<SeekMode>(memory.Read_U32(request.in_vectors[2].address));
+  const u32 cfd = Memory::Read_U32(request.in_vectors[0].address);
+  const u32 offset = Memory::Read_U32(request.in_vectors[1].address);
+  const SeekMode mode = static_cast<SeekMode>(Memory::Read_U32(request.in_vectors[2].address));
 
-    return m_core.SeekContent(cfd, offset, mode, uid, ticks);
-  });
+  return GetDefaultReply(SeekContent(cfd, offset, mode, uid));
 }
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

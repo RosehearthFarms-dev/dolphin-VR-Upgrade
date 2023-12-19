@@ -1,5 +1,6 @@
 // Copyright 2015 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -7,9 +8,9 @@
 #include <string>
 #include <vector>
 
-#include "InputCommon/ControllerInterface/ControllerInterface.h"
-
-namespace ciface::Pipes
+namespace ciface
+{
+namespace Pipes
 {
 // To create a piped controller input, create a named pipe in the
 // Pipes directory and write commands out to it. Commands are separated
@@ -32,7 +33,6 @@ public:
   void UpdateInput() override;
   std::string GetName() const override { return m_name; }
   std::string GetSource() const override { return "Pipe"; }
-
 private:
   class PipeInput : public Input
   {
@@ -41,7 +41,6 @@ private:
     std::string GetName() const override { return m_name; }
     ControlState GetState() const override { return m_state; }
     void SetState(ControlState state) { m_state = state; }
-
   private:
     const std::string m_name;
     ControlState m_state;
@@ -57,4 +56,5 @@ private:
   std::map<std::string, PipeInput*> m_buttons;
   std::map<std::string, PipeInput*> m_axes;
 };
-}  // namespace ciface::Pipes
+}
+}

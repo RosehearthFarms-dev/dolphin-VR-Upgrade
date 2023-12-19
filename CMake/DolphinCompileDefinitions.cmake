@@ -1,4 +1,4 @@
-# Add C or C++ compile definitions to the current scope
+# Add a C or C++ compile definitions to the current scope
 #
 # dolphin_compile_definitions(def [def ...] [DEBUG_ONLY | RELEASE_ONLY])
 #

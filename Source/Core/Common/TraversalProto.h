@@ -1,49 +1,44 @@
-// SPDX-License-Identifier: CC0-1.0
+// This file is public domain, in case it's useful to anyone. -comex
 
 #pragma once
-
 #include <array>
-#include <cstddef>
 #include "Common/CommonTypes.h"
 
-namespace Common
-{
-constexpr size_t NETPLAY_CODE_SIZE = 8;
-using TraversalHostId = std::array<char, NETPLAY_CODE_SIZE>;
-using TraversalRequestId = u64;
+#define NETPLAY_CODE_SIZE 8
+typedef std::array<char, NETPLAY_CODE_SIZE> TraversalHostId;
+typedef u64 TraversalRequestId;
 
-enum class TraversalPacketType : u8
+enum TraversalPacketType
 {
   // [*->*]
-  Ack = 0,
+  TraversalPacketAck = 0,
   // [c->s]
-  Ping = 1,
+  TraversalPacketPing = 1,
   // [c->s]
-  HelloFromClient = 2,
+  TraversalPacketHelloFromClient = 2,
   // [s->c]
-  HelloFromServer = 3,
+  TraversalPacketHelloFromServer = 3,
   // [c->s] When connecting, first the client asks the central server...
-  ConnectPlease = 4,
+  TraversalPacketConnectPlease = 4,
   // [s->c] ...who asks the game host to send a UDP packet to the
   // client... (an ack implies success)
-  PleaseSendPacket = 5,
+  TraversalPacketPleaseSendPacket = 5,
   // [s->c] ...which the central server relays back to the client.
-  ConnectReady = 6,
+  TraversalPacketConnectReady = 6,
   // [s->c] Alternately, the server might not have heard of this host.
-  ConnectFailed = 7,
-  // [c->s] Perform a traveral test. This will send two acks:
-  // one via the server's alt port, and one to the address corresponding to
-  // the given host ID.
-  TestPlease = 8,
+  TraversalPacketConnectFailed = 7
 };
 
-constexpr u8 TraversalProtoVersion = 0;
-
-enum class TraversalConnectFailedReason : u8
+enum
 {
-  ClientDidntRespond = 0,
-  ClientFailure,
-  NoSuchClient,
+  TraversalProtoVersion = 0
+};
+
+enum TraversalConnectFailedReason
+{
+  TraversalConnectFailedClientDidntRespond = 0,
+  TraversalConnectFailedClientFailure,
+  TraversalConnectFailedNoSuchClient
 };
 
 #pragma pack(push, 1)
@@ -55,7 +50,7 @@ struct TraversalInetAddress
 };
 struct TraversalPacket
 {
-  TraversalPacketType type;
+  u8 type;
   TraversalRequestId requestId;
   union
   {
@@ -75,7 +70,7 @@ struct TraversalPacket
     {
       u8 ok;
       TraversalHostId yourHostId;
-      TraversalInetAddress yourAddress;
+      TraversalInetAddress yourAddress;  // currently unused
     } helloFromServer;
     struct
     {
@@ -93,13 +88,8 @@ struct TraversalPacket
     struct
     {
       TraversalRequestId requestId;
-      TraversalConnectFailedReason reason;
+      u8 reason;
     } connectFailed;
-    struct
-    {
-      TraversalHostId hostId;
-    } testPlease;
   };
 };
 #pragma pack(pop)
-}  // namespace Common

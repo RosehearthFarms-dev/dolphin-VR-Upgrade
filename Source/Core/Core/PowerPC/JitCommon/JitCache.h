@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -10,34 +11,33 @@
 #include <map>
 #include <memory>
 #include <set>
-#include <type_traits>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "Common/CommonTypes.h"
-#include "Core/HW/Memmap.h"
-#include "Core/PowerPC/Gekko.h"
 
 class JitBase;
 
-// offsetof is only conditionally supported for non-standard layout types,
-// so this struct needs to have a standard layout.
-struct JitBlockData
+// A JitBlock is block of compiled code which corresponds to the PowerPC
+// code at a given address.
+//
+// The notion of the address of a block is a bit complicated because of the
+// way address translation works, but basically it's the combination of an
+// effective address, the address translation bits in MSR, and the physical
+// address.
+struct JitBlock
 {
-  // Memory range this code block takes up in near and far code caches.
-  u8* near_begin;
-  u8* near_end;
-  u8* far_begin;
-  u8* far_end;
+  bool OverlapsPhysicalRange(u32 address, u32 length) const;
 
+  // A special entry point for block linking; usually used to check the
+  // downcount.
+  const u8* checkedEntry;
   // The normal entry point for the block, returned by Dispatch().
-  u8* normalEntry;
+  const u8* normalEntry;
 
-  // The features that this block was compiled with support for.
-  CPUEmuFeatureFlags feature_flags;
   // The effective address (PC) for the beginning of the block.
   u32 effectiveAddress;
+  // The MSR bits expected for this block to be valid; see JIT_CACHE_MSR_MASK.
+  u32 msrBits;
   // The physical address of the code represented by this block.
   // Various maps in the cache are indexed by this (block_map
   // and valid_block in particular). This is useful because of
@@ -49,31 +49,12 @@ struct JitBlockData
   // The number of PPC instructions represented by this block. Mostly
   // useful for logging.
   u32 originalSize;
-  // This tracks the position of this block within the fast block cache.
-  // We only allow each block to have one map entry.
-  size_t fast_block_map_index;
-};
-static_assert(std::is_standard_layout_v<JitBlockData>, "JitBlockData must have a standard layout");
-
-// A JitBlock is a block of compiled code which corresponds to the PowerPC
-// code at a given address.
-//
-// The notion of the address of a block is a bit complicated because of the
-// way address translation works, but basically it's the combination of an
-// effective address, the address translation bits in MSR, and the physical
-// address.
-struct JitBlock : public JitBlockData
-{
-  bool OverlapsPhysicalRange(u32 address, u32 length) const;
 
   // Information about exits to a known address from this block.
   // This is used to implement block linking.
   struct LinkData
   {
     u8* exitPtrs;  // to be able to rewrite the exit jump
-#ifdef _M_ARM_64
-    const u8* exitFarcode;
-#endif
     u32 exitAddress;
     bool linkStatus;  // is it already linked?
     bool call;
@@ -92,6 +73,10 @@ struct JitBlock : public JitBlockData
     u64 ticStart;
     u64 ticStop;
   } profile_data = {};
+
+  // This tracks the position if this block within the fast block cache.
+  // We allow each block to have only one map entry.
+  size_t fast_block_map_index;
 };
 
 typedef void (*CompiledCode)();
@@ -123,29 +108,29 @@ public:
   void Set(u32 bit) { m_valid_block[bit / 32] |= 1u << (bit % 32); }
   void Clear(u32 bit) { m_valid_block[bit / 32] &= ~(1u << (bit % 32)); }
   void ClearAll() { memset(m_valid_block.get(), 0, sizeof(u32) * VALID_BLOCK_ALLOC_ELEMENTS); }
-  bool Test(u32 bit) const { return (m_valid_block[bit / 32] & (1u << (bit % 32))) != 0; }
+  bool Test(u32 bit) { return (m_valid_block[bit / 32] & (1u << (bit % 32))) != 0; }
 };
 
 class JitBaseBlockCache
 {
 public:
-  // The size of the fast map is determined like this:
-  // ((4 GiB guest memory space) / (4-byte alignment) * sizeof(JitBlock*)) << (3 feature flag bits)
-  static constexpr u64 FAST_BLOCK_MAP_SIZE = 0x10'0000'0000;
-  static constexpr u32 FAST_BLOCK_MAP_FALLBACK_ELEMENTS = 0x10000;
-  static constexpr u32 FAST_BLOCK_MAP_FALLBACK_MASK = FAST_BLOCK_MAP_FALLBACK_ELEMENTS - 1;
+  // Mask for the MSR bits which determine whether a compiled block
+  // is valid (MSR.IR and MSR.DR, the address translation bits).
+  static constexpr u32 JIT_CACHE_MSR_MASK = 0x30;
+
+  static constexpr u32 FAST_BLOCK_MAP_ELEMENTS = 0x10000;
+  static constexpr u32 FAST_BLOCK_MAP_MASK = FAST_BLOCK_MAP_ELEMENTS - 1;
 
   explicit JitBaseBlockCache(JitBase& jit);
   virtual ~JitBaseBlockCache();
 
-  virtual void Init();
+  void Init();
   void Shutdown();
   void Clear();
   void Reset();
 
   // Code Cache
-  u8** GetEntryPoints();
-  JitBlock** GetFastBlockMapFallback();
+  JitBlock** GetFastBlockMap();
   void RunOnBlocks(std::function<void(const JitBlock&)> f);
 
   JitBlock* AllocateBlock(u32 em_address);
@@ -154,7 +139,7 @@ public:
   // Look for the block in the slow but accurate way.
   // This function shall be used if FastLookupIndexForAddress() failed.
   // This might return nullptr if there is no such block.
-  JitBlock* GetBlockFromStartAddress(u32 em_address, CPUEmuFeatureFlags feature_flags);
+  JitBlock* GetBlockFromStartAddress(u32 em_address, u32 msr);
 
   // Get the normal entry for the block associated with the current program
   // counter. This will JIT code if necessary. (This is the reference
@@ -163,14 +148,11 @@ public:
   const u8* Dispatch();
 
   void InvalidateICache(u32 address, u32 length, bool forced);
-  void InvalidateICacheLine(u32 address);
   void ErasePhysicalRange(u32 address, u32 length);
 
   u32* GetBlockBitSet() const;
 
 protected:
-  virtual void DestroyBlock(JitBlock& block);
-
   JitBase& m_jit;
 
 private:
@@ -180,16 +162,16 @@ private:
   void LinkBlockExits(JitBlock& block);
   void LinkBlock(JitBlock& block);
   void UnlinkBlock(const JitBlock& block);
-  void InvalidateICacheInternal(u32 physical_address, u32 address, u32 length, bool forced);
+  void DestroyBlock(JitBlock& block);
 
-  JitBlock* MoveBlockIntoFastCache(u32 em_address, CPUEmuFeatureFlags feature_flags);
+  JitBlock* MoveBlockIntoFastCache(u32 em_address, u32 msr);
 
   // Fast but risky block lookup based on fast_block_map.
-  size_t FastLookupIndexForAddress(u32 address, u32 msr);
+  size_t FastLookupIndexForAddress(u32 address);
 
   // links_to hold all exit points of all valid blocks in a reverse way.
   // It is used to query all blocks which links to an address.
-  std::unordered_map<u32, std::unordered_set<JitBlock*>> links_to;  // destination_PC -> number
+  std::multimap<u32, JitBlock*> links_to;  // destination_PC -> number
 
   // Map indexed by the physical address of the entry point.
   // This is used to query the block based on the current PC in a slow way.
@@ -199,20 +181,13 @@ private:
   // This is used for invalidation of memory regions. The range is grouped
   // in macro blocks of each 0x100 bytes.
   static constexpr u32 BLOCK_RANGE_MAP_ELEMENTS = 0x100;
-  std::map<u32, std::unordered_set<JitBlock*>> block_range_map;
+  std::map<u32, std::set<JitBlock*>> block_range_map;
 
   // This bitsets shows which cachelines overlap with any blocks.
   // It is used to provide a fast way to query if no icache invalidation is needed.
   ValidBlockBitSet valid_block;
 
-  // This contains the entry points for each block.
-  // It is used by the assembly dispatcher to quickly
-  // know where to jump based on pc and msr bits.
-  Common::LazyMemoryRegion m_entry_points_arena;
-  u8** m_entry_points_ptr = 0;
-
-  // An alternative for the above but without a shm segment
-  // in case the shm memory region couldn't be allocated.
-  std::array<JitBlock*, FAST_BLOCK_MAP_FALLBACK_ELEMENTS>
-      m_fast_block_map_fallback{};  // start_addr & mask -> number
+  // This array is indexed with the masked PC and likely holds the correct block id.
+  // This is used as a fast cache of block_map used in the assembly dispatcher.
+  std::array<JitBlock*, FAST_BLOCK_MAP_ELEMENTS> fast_block_map;  // start_addr & mask -> number
 };

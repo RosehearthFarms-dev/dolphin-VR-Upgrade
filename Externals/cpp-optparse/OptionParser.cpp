@@ -208,8 +208,19 @@ const Option& OptionParser::lookup_short_opt(const string& opt) const {
 
 void OptionParser::handle_short_opt(const string& opt, const string& arg) {
 
+  // VR hack: check for long options first
+  string value = arg.substr(1);
+  for (optMap::const_iterator it = _optmap_l.begin(); it != _optmap_l.end(); ++it) {
+     if (it->first.compare(0, value.length(), value) == 0) {
+        if (it->first.length() == value.length())
+        {
+           handle_long_opt(value);
+           return;
+        }
+     }
+  }
+
   _remaining.pop_front();
-  string value;
 
   const Option& option = lookup_short_opt(opt);
   if (option._nargs == 1) {

@@ -1,5 +1,6 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/ConfigLoaders/GameConfigLoader.h"
 
@@ -14,8 +15,6 @@
 #include <utility>
 #include <vector>
 
-#include <fmt/format.h>
-
 #include "Common/CommonPaths.h"
 #include "Common/Config/Config.h"
 #include "Common/FileUtil.h"
@@ -24,9 +23,9 @@
 #include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
 
-#include "Core/Config/MainSettings.h"
+#include "Common/Config/Config.h"
+#include "Core/Config/GraphicsSettings.h"
 #include "Core/Config/SYSCONFSettings.h"
-#include "Core/Config/WiimoteSettings.h"
 #include "Core/ConfigLoaders/IsSettingSaveable.h"
 
 namespace ConfigLoaders
@@ -55,110 +54,169 @@ std::vector<std::string> GetGameIniFilenames(const std::string& id, std::optiona
 
   // INIs with specific revisions
   if (revision)
-    filenames.push_back(id + fmt::format("r{}", *revision) + ".ini");
+    filenames.push_back(id + StringFromFormat("r%d", *revision) + ".ini");
 
   return filenames;
 }
 
-using Location = Config::Location;
-using INIToLocationMap = std::map<std::pair<std::string, std::string>, Location>;
-using INIToSectionMap = std::map<std::string, std::pair<Config::System, std::string>>;
+using ConfigLocation = Config::ConfigLocation;
+using INIToLocationMap = std::map<std::pair<std::string, std::string>, ConfigLocation>;
 
-// This is a mapping from the legacy section-key pairs to Locations.
+// This is a mapping from the legacy section-key pairs to ConfigLocations.
 // New settings do not need to be added to this mapping.
 // See also: MapINIToRealLocation and GetINILocationFromConfig.
 static const INIToLocationMap& GetINIToLocationMap()
 {
   static const INIToLocationMap ini_to_location = {
-      {{"Core", "ProgressiveScan"}, {Config::SYSCONF_PROGRESSIVE_SCAN.GetLocation()}},
-      {{"Core", "PAL60"}, {Config::SYSCONF_PAL60.GetLocation()}},
-      {{"Wii", "Widescreen"}, {Config::SYSCONF_WIDESCREEN.GetLocation()}},
-      {{"Wii", "Language"}, {Config::SYSCONF_LANGUAGE.GetLocation()}},
-      {{"Core", "HLE_BS2"}, {Config::MAIN_SKIP_IPL.GetLocation()}},
-      {{"Core", "GameCubeLanguage"}, {Config::MAIN_GC_LANGUAGE.GetLocation()}},
-      {{"Controls", "PadType0"}, {Config::GetInfoForSIDevice(0).GetLocation()}},
-      {{"Controls", "PadType1"}, {Config::GetInfoForSIDevice(1).GetLocation()}},
-      {{"Controls", "PadType2"}, {Config::GetInfoForSIDevice(2).GetLocation()}},
-      {{"Controls", "PadType3"}, {Config::GetInfoForSIDevice(3).GetLocation()}},
-      {{"Controls", "WiimoteSource0"}, {Config::WIIMOTE_1_SOURCE.GetLocation()}},
-      {{"Controls", "WiimoteSource1"}, {Config::WIIMOTE_2_SOURCE.GetLocation()}},
-      {{"Controls", "WiimoteSource2"}, {Config::WIIMOTE_3_SOURCE.GetLocation()}},
-      {{"Controls", "WiimoteSource3"}, {Config::WIIMOTE_4_SOURCE.GetLocation()}},
-      {{"Controls", "WiimoteSourceBB"}, {Config::WIIMOTE_BB_SOURCE.GetLocation()}},
+      {{"Video_Hardware", "VSync"}, {Config::GFX_VSYNC.location}},
+
+      {{"Video_Settings", "wideScreenHack"}, {Config::GFX_WIDESCREEN_HACK.location}},
+      {{"Video_Settings", "AspectRatio"}, {Config::GFX_ASPECT_RATIO.location}},
+      {{"Video_Settings", "SuggestedAspectRatio"}, {Config::GFX_SUGGESTED_ASPECT_RATIO.location}},
+      {{"Video_Settings", "Crop"}, {Config::GFX_CROP.location}},
+      {{"Video_Settings", "UseXFB"}, {Config::GFX_USE_XFB.location}},
+      {{"Video_Settings", "UseRealXFB"}, {Config::GFX_USE_REAL_XFB.location}},
+      {{"Video_Settings", "SafeTextureCacheColorSamples"},
+       {Config::GFX_SAFE_TEXTURE_CACHE_COLOR_SAMPLES.location}},
+      {{"Video_Settings", "HiresTextures"}, {Config::GFX_HIRES_TEXTURES.location}},
+      {{"Video_Settings", "ConvertHiresTextures"}, {Config::GFX_CONVERT_HIRES_TEXTURES.location}},
+      {{"Video_Settings", "CacheHiresTextures"}, {Config::GFX_CACHE_HIRES_TEXTURES.location}},
+      {{"Video_Settings", "EnablePixelLighting"}, {Config::GFX_ENABLE_PIXEL_LIGHTING.location}},
+      {{"Video_Settings", "FastDepthCalc"}, {Config::GFX_FAST_DEPTH_CALC.location}},
+      {{"Video_Settings", "MSAA"}, {Config::GFX_MSAA.location}},
+      {{"Video_Settings", "SSAA"}, {Config::GFX_SSAA.location}},
+      {{"Video_Settings", "ForceTrueColor"}, {Config::GFX_ENHANCE_FORCE_TRUE_COLOR.location}},
+      {{"Video_Settings", "EFBScale"}, {Config::GFX_EFB_SCALE.location}},
+      {{"Video_Settings", "InternalResolution"}, {Config::GFX_INTERNAL_RESOLUTION.location}},
+      {{"Video_Settings", "DisableFog"}, {Config::GFX_DISABLE_FOG.location}},
+      {{"Video_Settings", "BackendMultithreading"}, {Config::GFX_BACKEND_MULTITHREADING.location}},
+      {{"Video_Settings", "CommandBufferExecuteInterval"},
+       {Config::GFX_COMMAND_BUFFER_EXECUTE_INTERVAL.location}},
+
+      {{"Video_Enhancements", "ForceFiltering"}, {Config::GFX_ENHANCE_FORCE_FILTERING.location}},
+      {{"Video_Enhancements", "MaxAnisotropy"}, {Config::GFX_ENHANCE_MAX_ANISOTROPY.location}},
+      {{"Video_Enhancements", "PostProcessingShader"}, {Config::GFX_ENHANCE_POST_SHADER.location}},
+
+      {{"Video_Stereoscopy", "StereoConvergence"}, {Config::GFX_STEREO_CONVERGENCE.location}},
+      {{"Video_Stereoscopy", "StereoEFBMonoDepth"}, {Config::GFX_STEREO_EFB_MONO_DEPTH.location}},
+      {{"Video_Stereoscopy", "StereoDepthPercentage"},
+       {Config::GFX_STEREO_DEPTH_PERCENTAGE.location}},
+
+      {{"Video_Stereoscopy", "StereoMode"}, {Config::GFX_STEREO_MODE.location}},
+      {{"Video_Stereoscopy", "StereoDepth"}, {Config::GFX_STEREO_DEPTH.location}},
+      {{"Video_Stereoscopy", "StereoSwapEyes"}, {Config::GFX_STEREO_SWAP_EYES.location}},
+
+      {{"Video_Hacks", "EFBAccessEnable"}, {Config::GFX_HACK_EFB_ACCESS_ENABLE.location}},
+      {{"Video_Hacks", "BBoxEnable"}, {Config::GFX_HACK_BBOX_ENABLE.location}},
+      {{"Video_Hacks", "ForceProgressive"}, {Config::GFX_HACK_FORCE_PROGRESSIVE.location}},
+      {{"Video_Hacks", "EFBToTextureEnable"}, {Config::GFX_HACK_SKIP_EFB_COPY_TO_RAM.location}},
+      {{"Video_Hacks", "EFBScaledCopy"}, {Config::GFX_EFB_SCALE.location}},
+      {{"Video_Hacks", "EFBEmulateFormatChanges"},
+       {Config::GFX_HACK_EFB_EMULATE_FORMAT_CHANGES.location}},
+      {{"Video_Hacks", "VertexRounding"}, {Config::GFX_HACK_VERTEX_ROUDING.location}},
+
+      {{"Video", "ProjectionHack"}, {Config::GFX_PROJECTION_HACK.location}},
+      {{"Video", "PH_SZNear"}, {Config::GFX_PROJECTION_HACK_SZNEAR.location}},
+      {{"Video", "PH_SZFar"}, {Config::GFX_PROJECTION_HACK_SZFAR.location}},
+      {{"Video", "PH_ZNear"}, {Config::GFX_PROJECTION_HACK_ZNEAR.location}},
+      {{"Video", "PH_ZFar"}, {Config::GFX_PROJECTION_HACK_ZFAR.location}},
+      {{"Video", "PerfQueriesEnable"}, {Config::GFX_PERF_QUERIES_ENABLE.location}},
+
+      {{"Core", "ProgressiveScan"}, {Config::SYSCONF_PROGRESSIVE_SCAN.location}},
+      {{"Core", "PAL60"}, {Config::SYSCONF_PAL60.location}},
+      {{"Wii", "Widescreen"}, {Config::SYSCONF_WIDESCREEN.location}},
+      {{"Wii", "Language"}, {Config::SYSCONF_LANGUAGE.location}},
+
+      {{"VR", "Disable3D"},{Config::GFX_VR_DISABLE_3D.location}},
+      {{"VR", "HudFullscreen"},{Config::GFX_VR_HUD_FULLSCREEN.location}},
+      {{"VR", "HudOnTop"},{Config::GFX_VR_HUD_ON_TOP.location}},
+      {{"VR", "DontClearScreen"},{Config::GFX_VR_DONT_CLEAR_SCREEN.location}},
+      {{"VR", "CanReadCameraAngles"},{Config::GFX_VR_CAN_READ_CAMERA_ANGLES.location}},
+      {{"VR", "DetectSkybox"},{Config::GFX_VR_DETECT_SKYBOX.location}},
+      {{"VR", "UnitsPerMetre"},{Config::GFX_VR_UNITS_PER_METRE.location}},
+      {{"VR", "HudThickness"},{Config::GFX_VR_HUD_THICKNESS.location}},
+      {{"VR", "HudDistance"},{Config::GFX_VR_HUD_DISTANCE.location}},
+      {{"VR", "Hud3DCloser"},{Config::GFX_VR_HUD_3D_CLOSER.location}},
+      {{"VR", "CameraForward"},{Config::GFX_VR_CAMERA_FORWARD.location}},
+      {{"VR", "CameraPitch"},{Config::GFX_VR_CAMERA_PITCH.location}},
+      {{"VR", "AimDistance"},{Config::GFX_VR_AIM_DISTANCE.location}},
+      {{"VR", "MinFOV"},{Config::GFX_VR_MIN_FOV.location}},
+      {{"VR", "N64FOV"},{Config::GFX_VR_N64_FOV.location}},
+      {{"VR", "ScreenHeight"},{Config::GFX_VR_SCREEN_HEIGHT.location}},
+      {{"VR", "ScreenThickness"},{Config::GFX_VR_SCREEN_THICKNESS.location}},
+      {{"VR", "ScreenDistance"},{Config::GFX_VR_SCREEN_DISTANCE.location}},
+      {{"VR", "ScreenRight"},{Config::GFX_VR_SCREEN_RIGHT.location}},
+      {{"VR", "ScreenUp"},{Config::GFX_VR_SCREEN_UP.location}},
+      {{"VR", "ScreenPitch"},{Config::GFX_VR_SCREEN_PITCH.location}},
+      {{"VR", "MetroidPrime"},{Config::GFX_VR_METROID_PRIME.location}},
+      {{"VR", "TelescopeEye"},{Config::GFX_VR_TELESCOPE_EYE.location}},
+      {{"VR", "TelescopeFOV"},{Config::GFX_VR_TELESCOPE_MAX_FOV.location}},
+      {{"VR", "ReadPitch"},{Config::GFX_VR_READ_PITCH.location}},
+      {{"VR", "CameraMinPoly"},{Config::GFX_VR_CAMERA_MIN_POLY.location}},
+      {{"VR", "HudDespPosition0"},{Config::GFX_VR_HUD_DESP_POSITION_0.location}},
+      {{"VR", "HudDespPosition1"},{Config::GFX_VR_HUD_DESP_POSITION_1.location}},
+      {{"VR", "HudDespPosition2"},{Config::GFX_VR_HUD_DESP_POSITION_2.location}},
+
   };
   return ini_to_location;
 }
 
-// This is a mapping from the legacy section names to system + section.
-// New settings do not need to be added to this mapping.
-// See also: MapINIToRealLocation and GetINILocationFromConfig.
-static const INIToSectionMap& GetINIToSectionMap()
-{
-  static const INIToSectionMap ini_to_section = {
-      {"Core", {Config::System::Main, "Core"}},
-      {"DSP", {Config::System::Main, "DSP"}},
-      {"Display", {Config::System::Main, "Display"}},
-      {"Video_Hardware", {Config::System::GFX, "Hardware"}},
-      {"Video_Settings", {Config::System::GFX, "Settings"}},
-      {"Video_Enhancements", {Config::System::GFX, "Enhancements"}},
-      {"Video_Stereoscopy", {Config::System::GFX, "Stereoscopy"}},
-      {"Video_Hacks", {Config::System::GFX, "Hacks"}},
-      {"Video", {Config::System::GFX, "GameSpecific"}},
-      {"Controls", {Config::System::GameSettingsOnly, "Controls"}},
-  };
-  return ini_to_section;
-}
-
-// Converts from a legacy GameINI section-key tuple to a Location.
+// Converts from a legacy GameINI section-key tuple to a ConfigLocation.
 // Also supports the following format:
 // [System.Section]
 // Key = Value
-static Location MapINIToRealLocation(const std::string& section, const std::string& key)
+static ConfigLocation MapINIToRealLocation(const std::string& section, const std::string& key)
 {
   static const INIToLocationMap& ini_to_location = GetINIToLocationMap();
-  const auto it = ini_to_location.find({section, key});
-  if (it != ini_to_location.end())
-    return it->second;
 
-  static const INIToSectionMap& ini_to_section = GetINIToSectionMap();
-  const auto it2 = ini_to_section.find(section);
-  if (it2 != ini_to_section.end())
-    return {it2->second.first, it2->second.second, key};
+  auto it = ini_to_location.find({section, key});
+  if (it == ini_to_location.end())
+  {
+    // Try again, but this time with an empty key
+    // Certain sections like 'Speedhacks' has keys that are variable
+    it = ini_to_location.find({section, ""});
+    if (it != ini_to_location.end())
+      return {it->second.system, it->second.section, key};
 
-  // Attempt to load it as a configuration option
-  // It will be in the format of '<System>.<Section>'
-  std::istringstream buffer(section);
-  std::string system_str, config_section;
+    // Attempt to load it as a configuration option
+    // It will be in the format of '<System>.<Section>'
+    std::istringstream buffer(section);
+    std::string system_str, config_section;
 
-  bool fail = false;
-  std::getline(buffer, system_str, '.');
-  fail |= buffer.fail();
-  std::getline(buffer, config_section, '.');
-  fail |= buffer.fail();
+    bool fail = false;
+    std::getline(buffer, system_str, '.');
+    fail |= buffer.fail();
+    std::getline(buffer, config_section, '.');
+    fail |= buffer.fail();
 
-  const std::optional<Config::System> system = Config::GetSystemFromName(system_str);
-  if (!fail && system)
-    return {*system, config_section, key};
+    if (!fail)
+      return {Config::GetSystemFromName(system_str), config_section, key};
 
-  WARN_LOG_FMT(CORE, "Unknown game INI option in section {}: {}", section, key);
-  return {Config::System::Main, "", ""};
+    WARN_LOG(CORE, "Unknown game INI option in section %s: %s", section.c_str(), key.c_str());
+    return {Config::System::Main, "", ""};
+  }
+
+  return ini_to_location.at({section, key});
 }
 
-static std::pair<std::string, std::string> GetINILocationFromConfig(const Location& location)
+static std::pair<std::string, std::string> GetINILocationFromConfig(const ConfigLocation& location)
 {
   static const INIToLocationMap& ini_to_location = GetINIToLocationMap();
-  const auto it = std::find_if(ini_to_location.begin(), ini_to_location.end(),
-                               [&location](const auto& entry) { return entry.second == location; });
+
+  auto it = std::find_if(ini_to_location.begin(), ini_to_location.end(),
+                         [&location](const auto& entry) { return entry.second == location; });
+
   if (it != ini_to_location.end())
     return it->first;
 
-  static const INIToSectionMap& ini_to_section = GetINIToSectionMap();
-  const auto it2 =
-      std::find_if(ini_to_section.begin(), ini_to_section.end(), [&location](const auto& entry) {
-        return entry.second.first == location.system && entry.second.second == location.section;
-      });
-  if (it2 != ini_to_section.end())
-    return {it2->first, location.key};
+  // Try again, but this time with an empty key
+  // Certain sections like 'Speedhacks' have keys that are variable
+  it = std::find_if(ini_to_location.begin(), ini_to_location.end(), [&location](const auto& entry) {
+    return std::tie(entry.second.system, entry.second.section) ==
+           std::tie(location.system, location.section);
+  });
+  if (it != ini_to_location.end())
+    return {it->first.first, location.key};
 
   return {Config::GetSystemName(location.system) + "." + location.section, location.key};
 }
@@ -175,7 +233,8 @@ public:
 
   void Load(Config::Layer* layer) override
   {
-    Common::IniFile ini;
+    INFO_LOG(CORE, "INIGameConfigLayerLoader::Load()");
+    IniFile ini;
     if (layer->GetLayer() == Config::LayerType::GlobalGame)
     {
       for (const std::string& filename : GetGameIniFilenames(m_id, m_revision))
@@ -187,11 +246,16 @@ public:
         ini.Load(File::GetUserPath(D_GAMESETTINGS_IDX) + filename, true);
     }
 
-    const auto& system_sections = ini.GetSections();
+    const std::list<IniFile::Section>& system_sections = ini.GetSections();
 
     for (const auto& section : system_sections)
     {
-      LoadFromSystemSection(layer, section);
+      std::string section_name = section.GetName();
+      LoadFromSystemSection(layer, section, section_name);
+      if (section_name.length()>3 && !strcasecmp(section_name.substr(section_name.length() - 3).c_str(), "_VR"))
+      {
+        LoadFromSystemSection(Config::GetLayer(Config::LayerType::VRGame), section, section_name.substr(0, section_name.length()-3));
+      }
     }
 
     LoadControllerConfig(layer);
@@ -202,6 +266,7 @@ public:
 private:
   void LoadControllerConfig(Config::Layer* layer) const
   {
+    INFO_LOG(CORE, "INIGameConfigLayerLoader::LoadControllerConfig()");
     // Game INIs can have controller profiles embedded in to them
     static const std::array<char, 4> nums = {{'1', '2', '3', '4'}};
 
@@ -219,7 +284,7 @@ private:
       std::string path = "Profiles/" + std::get<1>(use_data) + "/";
 
       const auto control_section = [&](std::string key) {
-        return Config::Location{std::get<2>(use_data), "Controls", key};
+        return Config::ConfigLocation{std::get<2>(use_data), "Controls", key};
       };
 
       for (const char num : nums)
@@ -230,19 +295,19 @@ private:
           if (!File::Exists(ini_path))
           {
             // TODO: PanicAlert shouldn't be used for this.
-            PanicAlertFmtT("Selected controller profile does not exist");
+            PanicAlertT("Selected controller profile does not exist");
             continue;
           }
 
-          Common::IniFile profile_ini;
+          IniFile profile_ini;
           profile_ini.Load(ini_path);
 
-          const auto* ini_section = profile_ini.GetOrCreateSection("Profile");
-          const auto& section_map = ini_section->GetValues();
+          const IniFile::Section* ini_section = profile_ini.GetOrCreateSection("Profile");
+          const IniFile::Section::SectionMap& section_map = ini_section->GetValues();
           for (const auto& value : section_map)
           {
-            Config::Location location{std::get<2>(use_data), std::get<1>(use_data) + num,
-                                      value.first};
+            Config::ConfigLocation location{std::get<2>(use_data), std::get<1>(use_data) + num,
+                                            value.first};
             layer->Set(location, value.second);
           }
         }
@@ -250,21 +315,17 @@ private:
     }
   }
 
-  void LoadFromSystemSection(Config::Layer* layer, const Common::IniFile::Section& section) const
+  void LoadFromSystemSection(Config::Layer* layer, const IniFile::Section& section, const std::string& section_name) const
   {
-    const std::string section_name = section.GetName();
 
     // Regular key,value pairs
-    const auto& section_map = section.GetValues();
+    const IniFile::Section::SectionMap& section_map = section.GetValues();
 
     for (const auto& value : section_map)
     {
       const auto location = MapINIToRealLocation(section_name, value.first);
 
       if (location.section.empty() && location.key.empty())
-        continue;
-
-      if (location.system == Config::System::Session)
         continue;
 
       layer->Set(location, value.second);
@@ -277,19 +338,20 @@ private:
 
 void INIGameConfigLayerLoader::Save(Config::Layer* layer)
 {
+  INFO_LOG(CORE, "INIGameConfigLayerLoader::Save()");
   if (layer->GetLayer() != Config::LayerType::LocalGame)
     return;
 
-  Common::IniFile ini;
+  IniFile ini;
   for (const std::string& file_name : GetGameIniFilenames(m_id, m_revision))
     ini.Load(File::GetUserPath(D_GAMESETTINGS_IDX) + file_name, true);
 
   for (const auto& config : layer->GetLayerMap())
   {
-    const Config::Location& location = config.first;
+    const Config::ConfigLocation& location = config.first;
     const std::optional<std::string>& value = config.second;
 
-    if (!IsSettingSaveable(location) || location.system == Config::System::Session)
+    if (!IsSettingSaveable(location))
       continue;
 
     const auto ini_location = GetINILocationFromConfig(location);
@@ -298,7 +360,7 @@ void INIGameConfigLayerLoader::Save(Config::Layer* layer)
 
     if (value)
     {
-      auto* ini_section = ini.GetOrCreateSection(ini_location.first);
+      IniFile::Section* ini_section = ini.GetOrCreateSection(ini_location.first);
       ini_section->Set(ini_location.second, *value);
     }
     else
@@ -309,7 +371,7 @@ void INIGameConfigLayerLoader::Save(Config::Layer* layer)
 
   // Try to save to the revision specific INI first, if it exists.
   const std::string gameini_with_rev =
-      File::GetUserPath(D_GAMESETTINGS_IDX) + m_id + fmt::format("r{}", m_revision) + ".ini";
+      File::GetUserPath(D_GAMESETTINGS_IDX) + m_id + StringFromFormat("r%d", m_revision) + ".ini";
   if (File::Exists(gameini_with_rev))
   {
     ini.Save(gameini_with_rev);
@@ -334,4 +396,4 @@ std::unique_ptr<Config::ConfigLayerLoader> GenerateLocalGameConfigLoader(const s
 {
   return std::make_unique<INIGameConfigLayerLoader>(id, revision, false);
 }
-}  // namespace ConfigLoaders
+}

@@ -1,5 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -50,11 +51,10 @@ class ProfilerExecuter
 public:
   ProfilerExecuter(Profiler* _p) : m_p(_p) { m_p->Start(); }
   ~ProfilerExecuter() { m_p->Stop(); }
-
 private:
   Profiler* m_p;
 };
-};  // namespace Common
+};
 
 // Warning: This profiler isn't thread safe. Only profile functions which doesn't run simultaneously
 #define PROFILE(name)                                                                              \

@@ -2,9 +2,19 @@
 // File: vk_platform.h
 //
 /*
-** Copyright 2014-2022 The Khronos Group Inc.
+** Copyright (c) 2014-2015 The Khronos Group Inc.
 **
-** SPDX-License-Identifier: Apache-2.0
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
 */
 
 
@@ -41,13 +51,13 @@ extern "C"
     #define VKAPI_ATTR
     #define VKAPI_CALL __stdcall
     #define VKAPI_PTR  VKAPI_CALL
-#elif defined(__ANDROID__) && defined(__ARM_ARCH) && __ARM_ARCH < 7
-    #error "Vulkan is not supported for the 'armeabi' NDK ABI"
-#elif defined(__ANDROID__) && defined(__ARM_ARCH) && __ARM_ARCH >= 7 && defined(__ARM_32BIT_STATE)
-    // On Android 32-bit ARM targets, Vulkan functions use the "hardfloat"
-    // calling convention, i.e. float parameters are passed in registers. This
-    // is true even if the rest of the application passes floats on the stack,
-    // as it does by default when compiling for the armeabi-v7a NDK ABI.
+#elif defined(__ANDROID__) && defined(__ARM_EABI__) && !defined(__ARM_ARCH_7A__)
+    // Android does not support Vulkan in native code using the "armeabi" ABI.
+    #error "Vulkan requires the 'armeabi-v7a' or 'armeabi-v7a-hard' ABI on 32-bit ARM CPUs"
+#elif defined(__ANDROID__) && defined(__ARM_ARCH_7A__)
+    // On Android/ARMv7a, Vulkan functions use the armeabi-v7a-hard calling
+    // convention, even if the application's native code is compiled with the
+    // armeabi-v7a calling convention.
     #define VKAPI_ATTR __attribute__((pcs("aapcs-vfp")))
     #define VKAPI_CALL
     #define VKAPI_PTR  VKAPI_ATTR
@@ -58,9 +68,7 @@ extern "C"
     #define VKAPI_PTR
 #endif
 
-#if !defined(VK_NO_STDDEF_H)
-    #include <stddef.h>
-#endif // !defined(VK_NO_STDDEF_H)
+#include <stddef.h>
 
 #if !defined(VK_NO_STDINT_H)
     #if defined(_MSC_VER) && (_MSC_VER < 1600)
@@ -80,5 +88,33 @@ extern "C"
 #ifdef __cplusplus
 } // extern "C"
 #endif // __cplusplus
+
+// Platform-specific headers required by platform window system extensions.
+// These are enabled prior to #including "vulkan.h". The same enable then
+// controls inclusion of the extension interfaces in vulkan.h.
+
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+#include <android/native_window.h>
+#endif
+
+#ifdef VK_USE_PLATFORM_MIR_KHR
+#include <mir_toolkit/client_types.h>
+#endif
+
+#ifdef VK_USE_PLATFORM_WAYLAND_KHR
+#include <wayland-client.h>
+#endif
+
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+#include <windows.h>
+#endif
+
+#ifdef VK_USE_PLATFORM_XLIB_KHR
+#include <X11/Xlib.h>
+#endif
+
+#ifdef VK_USE_PLATFORM_XCB_KHR
+#include <xcb/xcb.h>
+#endif
 
 #endif

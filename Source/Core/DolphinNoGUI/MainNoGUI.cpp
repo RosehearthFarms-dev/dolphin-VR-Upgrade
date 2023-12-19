@@ -1,7 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "DolphinNoGUI/Platform.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <OptionParser.h>
 #include <cstddef>
@@ -9,76 +8,97 @@
 #include <cstring>
 #include <signal.h>
 #include <string>
-#include <vector>
-
-#ifndef _WIN32
+#include <thread>
 #include <unistd.h>
-#else
-#include <Windows.h>
-#endif
 
-#include "Common/ScopeGuard.h"
-#include "Common/StringUtil.h"
+#include "Common/CommonTypes.h"
+#include "Common/Event.h"
+#include "Common/Flag.h"
+#include "Common/Logging/LogManager.h"
+#include "Common/MsgHandler.h"
+
+#include "Core/Analytics.h"
 #include "Core/Boot/Boot.h"
 #include "Core/BootManager.h"
+#include "Core/ConfigManager.h"
 #include "Core/Core.h"
-#include "Core/DolphinAnalytics.h"
 #include "Core/Host.h"
+#include "Core/IOS/IOS.h"
+#include "Core/IOS/STM/STM.h"
+#include "Core/State.h"
 
 #include "UICommon/CommandLineParse.h"
-#ifdef USE_DISCORD_PRESENCE
-#include "UICommon/DiscordPresence.h"
-#endif
 #include "UICommon/UICommon.h"
 
-#include "InputCommon/GCAdapter.h"
-
+#include "VideoCommon/RenderBase.h"
+#include "VideoCommon/VR.h"
 #include "VideoCommon/VideoBackendBase.h"
 
-static std::unique_ptr<Platform> s_platform;
+static bool rendererHasFocus = true;
+static bool rendererIsFullscreen = false;
+static Common::Flag s_running{true};
+static Common::Flag s_shutdown_requested{false};
+static Common::Flag s_tried_graceful_shutdown{false};
 
 static void signal_handler(int)
 {
   const char message[] = "A signal was received. A second signal will force Dolphin to stop.\n";
-#ifdef _WIN32
-  puts(message);
-#else
   if (write(STDERR_FILENO, message, sizeof(message)) < 0)
   {
   }
-#endif
-
-  s_platform->RequestShutdown();
+  s_shutdown_requested.Set();
 }
 
-std::vector<std::string> Host_GetPreferredLocales()
+namespace ProcessorInterface
 {
-  return {};
+void PowerButton_Tap();
 }
+
+class Platform
+{
+public:
+  virtual void Init() {}
+  virtual void SetTitle(const std::string& title) {}
+  virtual void MainLoop()
+  {
+    while (s_running.IsSet())
+    {
+      Core::HostDispatchJobs();
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  }
+  virtual void Shutdown() {}
+  virtual ~Platform() {}
+};
+
+static Platform* platform;
 
 void Host_NotifyMapLoaded()
 {
 }
-
 void Host_RefreshDSPDebuggerWindow()
 {
 }
 
-bool Host_UIBlocksControllerState()
+static Common::Event updateMainFrameEvent;
+void Host_Message(int Id)
 {
-  return false;
+  if (Id == WM_USER_STOP)
+  {
+    s_running.Clear();
+    updateMainFrameEvent.Set();
+  }
 }
 
-static Common::Event s_update_main_frame_event;
-void Host_Message(HostMessageID id)
+static void* s_window_handle = nullptr;
+void* Host_GetRenderHandle()
 {
-  if (id == HostMessageID::WMUserStop)
-    s_platform->Stop();
+  return s_window_handle;
 }
 
 void Host_UpdateTitle(const std::string& title)
 {
-  s_platform->SetTitle(title);
+  platform->SetTitle(title);
 }
 
 void Host_UpdateDisasmDialog()
@@ -87,149 +107,268 @@ void Host_UpdateDisasmDialog()
 
 void Host_UpdateMainFrame()
 {
-  s_update_main_frame_event.Set();
+  updateMainFrameEvent.Set();
 }
 
 void Host_RequestRenderWindowSize(int width, int height)
 {
 }
 
-bool Host_RendererHasFocus()
+bool Host_UINeedsControllerState()
 {
-  return s_platform->IsWindowFocused();
+  return false;
 }
 
-bool Host_RendererHasFullFocus()
+bool Host_RendererHasFocus()
 {
-  // Mouse capturing isn't implemented
-  return Host_RendererHasFocus();
+  return rendererHasFocus;
 }
 
 bool Host_RendererIsFullscreen()
 {
-  return s_platform->IsWindowFullscreen();
+  return rendererIsFullscreen;
+}
+
+void Host_SetWiiMoteConnectionState(int _State)
+{
+}
+
+void Host_ShowVideoConfig(void*, const std::string&)
+{
 }
 
 void Host_YieldToUI()
 {
 }
 
-void Host_TitleChanged()
+void Host_UpdateProgressDialog(const char* caption, int position, int total)
 {
-#ifdef USE_DISCORD_PRESENCE
-  Discord::UpdateDiscordPresence();
-#endif
 }
-
-void Host_UpdateDiscordClientID(const std::string& client_id)
-{
-#ifdef USE_DISCORD_PRESENCE
-  Discord::UpdateClientID(client_id);
-#endif
-}
-
-bool Host_UpdateDiscordPresenceRaw(const std::string& details, const std::string& state,
-                                   const std::string& large_image_key,
-                                   const std::string& large_image_text,
-                                   const std::string& small_image_key,
-                                   const std::string& small_image_text,
-                                   const int64_t start_timestamp, const int64_t end_timestamp,
-                                   const int party_size, const int party_max)
-{
-#ifdef USE_DISCORD_PRESENCE
-  return Discord::UpdateDiscordPresenceRaw(details, state, large_image_key, large_image_text,
-                                           small_image_key, small_image_text, start_timestamp,
-                                           end_timestamp, party_size, party_max);
-#else
-  return false;
-#endif
-}
-
-std::unique_ptr<GBAHostInterface> Host_CreateGBAHost(std::weak_ptr<HW::GBA::Core> core)
-{
-  return nullptr;
-}
-
-static std::unique_ptr<Platform> GetPlatform(const optparse::Values& options)
-{
-  std::string platform_name = static_cast<const char*>(options.get("platform"));
 
 #if HAVE_X11
-  if (platform_name == "x11" || platform_name.empty())
-    return Platform::CreateX11Platform();
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#include "UICommon/X11Utils.h"
+
+class PlatformX11 : public Platform
+{
+  Display* dpy;
+  Window win;
+  Cursor blankCursor = None;
+#if defined(HAVE_XRANDR) && HAVE_XRANDR
+  X11Utils::XRRConfiguration* XRRConfig;
 #endif
 
-#ifdef __linux__
-  if (platform_name == "fbdev" || platform_name.empty())
-    return Platform::CreateFBDevPlatform();
+  void Init() override
+  {
+    XInitThreads();
+    dpy = XOpenDisplay(nullptr);
+    if (!dpy)
+    {
+      PanicAlert("No X11 display found");
+      exit(1);
+    }
+
+    win = XCreateSimpleWindow(dpy, DefaultRootWindow(dpy), SConfig::GetInstance().iRenderWindowXPos,
+                              SConfig::GetInstance().iRenderWindowYPos,
+                              SConfig::GetInstance().iRenderWindowWidth,
+                              SConfig::GetInstance().iRenderWindowHeight, 0, 0, BlackPixel(dpy, 0));
+    XSelectInput(dpy, win, StructureNotifyMask | KeyPressMask | FocusChangeMask);
+    Atom wmProtocols[1];
+    wmProtocols[0] = XInternAtom(dpy, "WM_DELETE_WINDOW", True);
+    XSetWMProtocols(dpy, win, wmProtocols, 1);
+    XMapRaised(dpy, win);
+    XFlush(dpy);
+    s_window_handle = (void*)win;
+
+    if (SConfig::GetInstance().bDisableScreenSaver)
+      X11Utils::InhibitScreensaver(dpy, win, true);
+
+#if defined(HAVE_XRANDR) && HAVE_XRANDR
+    XRRConfig = new X11Utils::XRRConfiguration(dpy, win);
 #endif
 
-#ifdef _WIN32
-  if (platform_name == "win32" || platform_name.empty())
-    return Platform::CreateWin32Platform();
+    if (SConfig::GetInstance().bHideCursor)
+    {
+      // make a blank cursor
+      Pixmap Blank;
+      XColor DummyColor;
+      char ZeroData[1] = {0};
+      Blank = XCreateBitmapFromData(dpy, win, ZeroData, 1, 1);
+      blankCursor = XCreatePixmapCursor(dpy, Blank, Blank, &DummyColor, &DummyColor, 0, 0);
+      XFreePixmap(dpy, Blank);
+      XDefineCursor(dpy, win, blankCursor);
+    }
+  }
+
+  void SetTitle(const std::string& string) override { XStoreName(dpy, win, string.c_str()); }
+  void MainLoop() override
+  {
+    bool fullscreen = SConfig::GetInstance().bFullscreen;
+    int last_window_width = SConfig::GetInstance().iRenderWindowWidth;
+    int last_window_height = SConfig::GetInstance().iRenderWindowHeight;
+
+    if (fullscreen)
+    {
+      rendererIsFullscreen = X11Utils::ToggleFullscreen(dpy, win);
+#if defined(HAVE_XRANDR) && HAVE_XRANDR
+      XRRConfig->ToggleDisplayMode(True);
 #endif
-#ifdef __APPLE__
-  if (platform_name == "macos" || platform_name.empty())
-    return Platform::CreateMacOSPlatform();
+    }
+
+    // The actual loop
+    while (s_running.IsSet())
+    {
+      if (s_shutdown_requested.TestAndClear())
+      {
+        const auto ios = IOS::HLE::GetIOS();
+        const auto stm = ios ? ios->GetDeviceByName("/dev/stm/eventhook") : nullptr;
+        if (!s_tried_graceful_shutdown.IsSet() && stm &&
+            std::static_pointer_cast<IOS::HLE::Device::STMEventHook>(stm)->HasHookInstalled())
+        {
+          ProcessorInterface::PowerButton_Tap();
+          s_tried_graceful_shutdown.Set();
+        }
+        else
+        {
+          s_running.Clear();
+        }
+      }
+
+      XEvent event;
+      KeySym key;
+      for (int num_events = XPending(dpy); num_events > 0; num_events--)
+      {
+        XNextEvent(dpy, &event);
+        switch (event.type)
+        {
+        case KeyPress:
+          key = XLookupKeysym((XKeyEvent*)&event, 0);
+          if (key == XK_Escape)
+          {
+            if (Core::GetState() == Core::State::Running)
+            {
+              if (SConfig::GetInstance().bHideCursor)
+                XUndefineCursor(dpy, win);
+              Core::SetState(Core::State::Paused);
+            }
+            else
+            {
+              if (SConfig::GetInstance().bHideCursor)
+                XDefineCursor(dpy, win, blankCursor);
+              Core::SetState(Core::State::Running);
+            }
+          }
+          else if ((key == XK_Return) && (event.xkey.state & Mod1Mask))
+          {
+            fullscreen = !fullscreen;
+            X11Utils::ToggleFullscreen(dpy, win);
+#if defined(HAVE_XRANDR) && HAVE_XRANDR
+            XRRConfig->ToggleDisplayMode(fullscreen);
+#endif
+          }
+          else if (key >= XK_F1 && key <= XK_F8)
+          {
+            int slot_number = key - XK_F1 + 1;
+            if (event.xkey.state & ShiftMask)
+              State::Save(slot_number);
+            else
+              State::Load(slot_number);
+          }
+          else if (key == XK_F9)
+            Core::SaveScreenShot();
+          else if (key == XK_F11)
+            State::LoadLastSaved();
+          else if (key == XK_F12)
+          {
+            if (event.xkey.state & ShiftMask)
+              State::UndoLoadState();
+            else
+              State::UndoSaveState();
+          }
+          break;
+        case FocusIn:
+          rendererHasFocus = true;
+          if (SConfig::GetInstance().bHideCursor && Core::GetState() != Core::State::Paused)
+            XDefineCursor(dpy, win, blankCursor);
+          break;
+        case FocusOut:
+          rendererHasFocus = false;
+          if (SConfig::GetInstance().bHideCursor)
+            XUndefineCursor(dpy, win);
+          break;
+        case ClientMessage:
+          if ((unsigned long)event.xclient.data.l[0] == XInternAtom(dpy, "WM_DELETE_WINDOW", False))
+            s_shutdown_requested.Set();
+          break;
+        case ConfigureNotify:
+        {
+          if (last_window_width != event.xconfigure.width ||
+              last_window_height != event.xconfigure.height)
+          {
+            last_window_width = event.xconfigure.width;
+            last_window_height = event.xconfigure.height;
+
+            // We call Renderer::ChangeSurface here to indicate the size has changed,
+            // but pass the same window handle. This is needed for the Vulkan backend,
+            // otherwise it cannot tell that the window has been resized on some drivers.
+            if (g_renderer)
+              g_renderer->ChangeSurface(s_window_handle);
+          }
+        }
+        break;
+        }
+      }
+      if (!fullscreen)
+      {
+        Window winDummy;
+        unsigned int borderDummy, depthDummy;
+        XGetGeometry(dpy, win, &winDummy, &SConfig::GetInstance().iRenderWindowXPos,
+                     &SConfig::GetInstance().iRenderWindowYPos,
+                     (unsigned int*)&SConfig::GetInstance().iRenderWindowWidth,
+                     (unsigned int*)&SConfig::GetInstance().iRenderWindowHeight, &borderDummy,
+                     &depthDummy);
+        rendererIsFullscreen = false;
+      }
+      Core::HostDispatchJobs();
+      usleep(100000);
+    }
+  }
+
+  void Shutdown() override
+  {
+#if defined(HAVE_XRANDR) && HAVE_XRANDR
+    delete XRRConfig;
 #endif
 
-  if (platform_name == "headless" || platform_name.empty())
-    return Platform::CreateHeadlessPlatform();
+    if (SConfig::GetInstance().bHideCursor)
+      XFreeCursor(dpy, blankCursor);
 
+    XCloseDisplay(dpy);
+  }
+};
+#endif
+
+static Platform* GetPlatform()
+{
+#if defined(USE_HEADLESS)
+  return new Platform();
+#elif HAVE_X11
+  return new PlatformX11();
+#endif
   return nullptr;
 }
-
-#ifdef _WIN32
-#define main app_main
-#endif
 
 int main(int argc, char* argv[])
 {
-  Core::DeclareAsHostThread();
-
   auto parser = CommandLineParse::CreateParser(CommandLineParse::ParserOptions::OmitGUIOptions);
-  parser->add_option("-p", "--platform")
-      .action("store")
-      .help("Window platform to use [%choices]")
-      .choices({
-        "headless"
-#ifdef __linux__
-            ,
-            "fbdev"
-#endif
-#if HAVE_X11
-            ,
-            "x11"
-#endif
-#ifdef _WIN32
-            ,
-            "win32"
-#endif
-#ifdef __APPLE__
-            ,
-            "macos"
-#endif
-      });
-
   optparse::Values& options = CommandLineParse::ParseArguments(parser.get(), argc, argv);
   std::vector<std::string> args = parser->args();
 
-  std::optional<std::string> save_state_path;
-  if (options.is_set("save_state"))
-  {
-    save_state_path = static_cast<const char*>(options.get("save_state"));
-  }
-
   std::unique_ptr<BootParameters> boot;
-  bool game_specified = false;
   if (options.is_set("exec"))
   {
-    const std::list<std::string> paths_list = options.all("exec");
-    const std::vector<std::string> paths{std::make_move_iterator(std::begin(paths_list)),
-                                         std::make_move_iterator(std::end(paths_list))};
-    boot = BootParameters::GenerateFromFile(
-        paths, BootSessionData(save_state_path, DeleteSavestateAfterBoot::No));
-    game_specified = true;
+    boot = BootParameters::GenerateFromFile(static_cast<const char*>(options.get("exec")));
   }
   else if (options.is_set("nand_title"))
   {
@@ -245,10 +384,8 @@ int main(int argc, char* argv[])
   }
   else if (args.size())
   {
-    boot = BootParameters::GenerateFromFile(
-        args.front(), BootSessionData(save_state_path, DeleteSavestateAfterBoot::No));
+    boot = BootParameters::GenerateFromFile(args.front());
     args.erase(args.begin());
-    game_specified = true;
   }
   else
   {
@@ -258,41 +395,26 @@ int main(int argc, char* argv[])
 
   std::string user_directory;
   if (options.is_set("user"))
-    user_directory = static_cast<const char*>(options.get("user"));
-
-  s_platform = GetPlatform(options);
-  if (!s_platform || !s_platform->Init())
   {
-    fprintf(stderr, "No platform found, or failed to initialize.\n");
-    return 1;
+    user_directory = static_cast<const char*>(options.get("user"));
   }
 
-  const WindowSystemInfo wsi = s_platform->GetWindowSystemInfo();
+  platform = GetPlatform();
+  if (!platform)
+  {
+    fprintf(stderr, "No platform found\n");
+    return 1;
+  }
 
   UICommon::SetUserDirectory(user_directory);
   UICommon::Init();
-  UICommon::InitControllers(wsi);
 
-  Common::ScopeGuard ui_common_guard([] {
-    UICommon::ShutdownControllers();
-    UICommon::Shutdown();
-  });
-
-  if (save_state_path && !game_specified)
-  {
-    fprintf(stderr, "A save state cannot be loaded without specifying a game to launch.\n");
-    return 1;
-  }
-
-  Core::AddOnStateChangedCallback([](Core::State state) {
+  Core::SetOnStateChangedCallback([](Core::State state) {
     if (state == Core::State::Uninitialized)
-      s_platform->Stop();
+      s_running.Clear();
   });
+  platform->Init();
 
-#ifdef _WIN32
-  signal(SIGINT, signal_handler);
-  signal(SIGTERM, signal_handler);
-#else
   // Shut down cleanly on SIGINT and SIGTERM
   struct sigaction sa;
   sa.sa_handler = signal_handler;
@@ -300,40 +422,30 @@ int main(int argc, char* argv[])
   sa.sa_flags = SA_RESETHAND;
   sigaction(SIGINT, &sa, nullptr);
   sigaction(SIGTERM, &sa, nullptr);
-#endif
 
-  DolphinAnalytics::Instance().ReportDolphinStart("nogui");
+  DolphinAnalytics::Instance()->ReportDolphinStart("nogui");
 
-  if (!BootManager::BootCore(std::move(boot), wsi))
+  if (!BootManager::BootCore(std::move(boot)))
   {
     fprintf(stderr, "Could not boot the specified file\n");
     return 1;
   }
 
-#ifdef USE_DISCORD_PRESENCE
-  Discord::UpdateDiscordPresence();
-#endif
+  while (!Core::IsRunning() && s_running.IsSet())
+  {
+    Core::HostDispatchJobs();
+    updateMainFrameEvent.Wait();
+  }
 
-  s_platform->MainLoop();
+  if (s_running.IsSet())
+    platform->MainLoop();
   Core::Stop();
 
   Core::Shutdown();
-  s_platform.reset();
+  platform->Shutdown();
+  UICommon::Shutdown();
+
+  delete platform;
 
   return 0;
 }
-
-#ifdef _WIN32
-int wmain(int, wchar_t*[], wchar_t*[])
-{
-  std::vector<std::string> args = Common::CommandLineToUtf8Argv(GetCommandLineW());
-  const int argc = static_cast<int>(args.size());
-  std::vector<char*> argv(args.size());
-  for (size_t i = 0; i < args.size(); ++i)
-    argv[i] = args[i].data();
-
-  return main(argc, argv.data());
-}
-
-#undef main
-#endif

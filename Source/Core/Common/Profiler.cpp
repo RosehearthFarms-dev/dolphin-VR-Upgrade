@@ -1,7 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "Common/Profiler.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +10,7 @@
 #include <ios>
 #include <sstream>
 
+#include "Common/Profiler.h"
 #include "Common/Timer.h"
 
 namespace Common
@@ -25,14 +25,14 @@ u32 Profiler::s_max_length = 0;
 u64 Profiler::s_frame_time;
 u64 Profiler::s_usecs_frame;
 
-std::string Profiler::s_lazy_result;
+std::string Profiler::s_lazy_result = "";
 int Profiler::s_lazy_delay = 0;
 
 Profiler::Profiler(const std::string& name)
     : m_name(name), m_usecs(0), m_usecs_min(UINT64_MAX), m_usecs_max(0), m_usecs_quad(0),
       m_calls(0), m_depth(0)
 {
-  m_time = Common::Timer::NowUs();
+  m_time = Common::Timer::GetTimeUs();
   s_max_length = std::max<u32>(s_max_length, u32(m_name.length()));
 
   std::lock_guard<std::mutex> lk(s_mutex);
@@ -64,7 +64,7 @@ std::string Profiler::ToString()
   if (s_all_profilers.empty())
     return "";
 
-  u64 end = Common::Timer::NowUs();
+  u64 end = Common::Timer::GetTimeUs();
   s_usecs_frame = end - s_frame_time;
   s_frame_time = end;
 
@@ -101,7 +101,7 @@ void Profiler::Start()
 {
   if (!m_depth++)
   {
-    m_time = Common::Timer::NowUs();
+    m_time = Common::Timer::GetTimeUs();
   }
 }
 
@@ -109,7 +109,7 @@ void Profiler::Stop()
 {
   if (!--m_depth)
   {
-    u64 end = Common::Timer::NowUs();
+    u64 end = Common::Timer::GetTimeUs();
 
     u64 diff = end - m_time;
 
@@ -161,4 +161,4 @@ std::string Profiler::Read()
 
   return buffer.str();
 }
-}  // namespace Common
+}

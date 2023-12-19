@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // WARNING - THIS LIBRARY IS NOT THREAD SAFE!!!
 
@@ -8,7 +9,6 @@
 #include <cstddef>
 #include <cstring>
 #include <functional>
-#include <tuple>
 #include <type_traits>
 
 #include "Common/Assert.h"
@@ -78,6 +78,21 @@ enum
   SCALE_IMM64 = 0xF3,
 };
 
+enum NormalOp
+{
+  nrmADD,
+  nrmADC,
+  nrmSUB,
+  nrmSBB,
+  nrmAND,
+  nrmOR,
+  nrmXOR,
+  nrmMOV,
+  nrmTEST,
+  nrmCMP,
+  nrmXCHG,
+};
+
 enum SSECompare
 {
   CMP_EQ = 0,
@@ -90,9 +105,18 @@ enum SSECompare
   CMP_ORD = 7,
 };
 
+enum FloatOp
+{
+  floatLD = 0,
+  floatST = 2,
+  floatSTP = 3,
+  floatLD80 = 5,
+  floatSTP80 = 7,
+
+  floatINVALID = -1,
+};
+
 class XEmitter;
-enum class FloatOp;
-enum class NormalOp;
 
 // Information about a generated MOV op
 struct MovInfo final
@@ -106,95 +130,103 @@ struct MovInfo final
 // RIP addressing does not benefit from micro op fusion on Core arch
 struct OpArg
 {
-  // For accessing offset and operandReg.
-  // This also allows us to keep the op writing functions private.
-  friend class XEmitter;
+  friend class XEmitter;  // For accessing offset and operandReg
 
-  // dummy op arg, used for storage
-  constexpr OpArg() = default;
-  constexpr OpArg(u64 offset_, int scale_, X64Reg rm_reg = RAX, X64Reg scaled_reg = RAX)
-      : scale{static_cast<u8>(scale_)}, offsetOrBaseReg{static_cast<u16>(rm_reg)},
-        indexReg{static_cast<u16>(scaled_reg)}, offset{offset_}
+  OpArg() {}  // dummy op arg, used for storage
+  OpArg(u64 _offset, int _scale, X64Reg rmReg = RAX, X64Reg scaledReg = RAX)
   {
+    operandReg = 0;
+    scale = (u8)_scale;
+    offsetOrBaseReg = (u16)rmReg;
+    indexReg = (u16)scaledReg;
+    // if scale == 0 never mind offsetting
+    offset = _offset;
   }
-  constexpr bool operator==(const OpArg& b) const
+  bool operator==(const OpArg& b) const
   {
-    return std::tie(scale, offsetOrBaseReg, indexReg, offset, operandReg) ==
-           std::tie(b.scale, b.offsetOrBaseReg, b.indexReg, b.offset, b.operandReg);
+    return operandReg == b.operandReg && scale == b.scale && offsetOrBaseReg == b.offsetOrBaseReg &&
+           indexReg == b.indexReg && offset == b.offset;
   }
-  constexpr bool operator!=(const OpArg& b) const { return !operator==(b); }
+  void WriteREX(XEmitter* emit, int opBits, int bits, int customOp = -1) const;
+  void WriteVEX(XEmitter* emit, X64Reg regOp1, X64Reg regOp2, int L, int pp, int mmmmm,
+                int W = 0) const;
+  void WriteRest(XEmitter* emit, int extraBytes = 0, X64Reg operandReg = INVALID_REG,
+                 bool warn_64bit_offset = true) const;
+  void WriteSingleByteOp(XEmitter* emit, u8 op, X64Reg operandReg, int bits);
+
   u64 Imm64() const
   {
-    DEBUG_ASSERT(scale == SCALE_IMM64);
+    _dbg_assert_(DYNA_REC, scale == SCALE_IMM64);
     return (u64)offset;
   }
   u32 Imm32() const
   {
-    DEBUG_ASSERT(scale == SCALE_IMM32);
+    _dbg_assert_(DYNA_REC, scale == SCALE_IMM32);
     return (u32)offset;
   }
   u16 Imm16() const
   {
-    DEBUG_ASSERT(scale == SCALE_IMM16);
+    _dbg_assert_(DYNA_REC, scale == SCALE_IMM16);
     return (u16)offset;
   }
   u8 Imm8() const
   {
-    DEBUG_ASSERT(scale == SCALE_IMM8);
+    _dbg_assert_(DYNA_REC, scale == SCALE_IMM8);
     return (u8)offset;
   }
 
   s64 SImm64() const
   {
-    DEBUG_ASSERT(scale == SCALE_IMM64);
+    _dbg_assert_(DYNA_REC, scale == SCALE_IMM64);
     return (s64)offset;
   }
   s32 SImm32() const
   {
-    DEBUG_ASSERT(scale == SCALE_IMM32);
+    _dbg_assert_(DYNA_REC, scale == SCALE_IMM32);
     return (s32)offset;
   }
   s16 SImm16() const
   {
-    DEBUG_ASSERT(scale == SCALE_IMM16);
+    _dbg_assert_(DYNA_REC, scale == SCALE_IMM16);
     return (s16)offset;
   }
   s8 SImm8() const
   {
-    DEBUG_ASSERT(scale == SCALE_IMM8);
+    _dbg_assert_(DYNA_REC, scale == SCALE_IMM8);
     return (s8)offset;
   }
 
   OpArg AsImm64() const
   {
-    DEBUG_ASSERT(IsImm());
+    _dbg_assert_(DYNA_REC, IsImm());
     return OpArg((u64)offset, SCALE_IMM64);
   }
   OpArg AsImm32() const
   {
-    DEBUG_ASSERT(IsImm());
+    _dbg_assert_(DYNA_REC, IsImm());
     return OpArg((u32)offset, SCALE_IMM32);
   }
   OpArg AsImm16() const
   {
-    DEBUG_ASSERT(IsImm());
+    _dbg_assert_(DYNA_REC, IsImm());
     return OpArg((u16)offset, SCALE_IMM16);
   }
   OpArg AsImm8() const
   {
-    DEBUG_ASSERT(IsImm());
+    _dbg_assert_(DYNA_REC, IsImm());
     return OpArg((u8)offset, SCALE_IMM8);
   }
 
-  constexpr bool IsImm() const
+  void WriteNormalOp(XEmitter* emit, bool toRM, NormalOp op, const OpArg& operand, int bits) const;
+  bool IsImm() const
   {
     return scale == SCALE_IMM8 || scale == SCALE_IMM16 || scale == SCALE_IMM32 ||
            scale == SCALE_IMM64;
   }
-  constexpr bool IsSimpleReg() const { return scale == SCALE_NONE; }
-  constexpr bool IsSimpleReg(X64Reg reg) const { return IsSimpleReg() && GetSimpleReg() == reg; }
-  constexpr bool IsZero() const { return IsImm() && offset == 0; }
-  constexpr int GetImmBits() const
+  bool IsSimpleReg() const { return scale == SCALE_NONE; }
+  bool IsSimpleReg(X64Reg reg) const { return IsSimpleReg() && GetSimpleReg() == reg; }
+  bool IsZero() const { return IsImm() && offset == 0; }
+  int GetImmBits() const
   {
     switch (scale)
     {
@@ -211,35 +243,27 @@ struct OpArg
     }
   }
 
-  constexpr X64Reg GetSimpleReg() const
+  X64Reg GetSimpleReg() const
   {
     if (scale == SCALE_NONE)
-      return static_cast<X64Reg>(offsetOrBaseReg);
-
-    return INVALID_REG;
+      return (X64Reg)offsetOrBaseReg;
+    else
+      return INVALID_REG;
   }
 
   void AddMemOffset(int val)
   {
-    DEBUG_ASSERT_MSG(DYNA_REC, scale == SCALE_RIP || (scale <= SCALE_ATREG && scale > SCALE_NONE),
+    _dbg_assert_msg_(DYNA_REC, scale == SCALE_RIP || (scale <= SCALE_ATREG && scale > SCALE_NONE),
                      "Tried to increment an OpArg which doesn't have an offset");
     offset += val;
   }
 
 private:
-  void WriteREX(XEmitter* emit, int opBits, int bits, int customOp = -1) const;
-  void WriteVEX(XEmitter* emit, X64Reg regOp1, X64Reg regOp2, int L, int pp, int mmmmm,
-                int W = 0) const;
-  void WriteRest(XEmitter* emit, int extraBytes = 0, X64Reg operandReg = INVALID_REG,
-                 bool warn_64bit_offset = true) const;
-  void WriteSingleByteOp(XEmitter* emit, u8 op, X64Reg operandReg, int bits);
-  void WriteNormalOp(XEmitter* emit, bool toRM, NormalOp op, const OpArg& operand, int bits) const;
-
-  u8 scale = 0;
-  u16 offsetOrBaseReg = 0;
-  u16 indexReg = 0;
-  u64 offset = 0;  // Also used to store immediates.
-  u16 operandReg = 0;
+  u8 scale;
+  u16 offsetOrBaseReg;
+  u16 indexReg;
+  u64 offset;  // Also used to store immediates.
+  u16 operandReg;
 };
 
 template <typename T>
@@ -247,57 +271,57 @@ inline OpArg M(const T* ptr)
 {
   return OpArg((u64)(const void*)ptr, (int)SCALE_RIP);
 }
-constexpr OpArg R(X64Reg value)
+inline OpArg R(X64Reg value)
 {
   return OpArg(0, SCALE_NONE, value);
 }
-constexpr OpArg MatR(X64Reg value)
+inline OpArg MatR(X64Reg value)
 {
   return OpArg(0, SCALE_ATREG, value);
 }
 
-constexpr OpArg MDisp(X64Reg value, int offset)
+inline OpArg MDisp(X64Reg value, int offset)
 {
-  return OpArg(static_cast<u32>(offset), SCALE_ATREG, value);
+  return OpArg((u32)offset, SCALE_ATREG, value);
 }
 
-constexpr OpArg MComplex(X64Reg base, X64Reg scaled, int scale, int offset)
+inline OpArg MComplex(X64Reg base, X64Reg scaled, int scale, int offset)
 {
   return OpArg(offset, scale, base, scaled);
 }
 
-constexpr OpArg MScaled(X64Reg scaled, int scale, int offset)
+inline OpArg MScaled(X64Reg scaled, int scale, int offset)
 {
   if (scale == SCALE_1)
     return OpArg(offset, SCALE_ATREG, scaled);
-
-  return OpArg(offset, scale | 0x20, RAX, scaled);
+  else
+    return OpArg(offset, scale | 0x20, RAX, scaled);
 }
 
-constexpr OpArg MRegSum(X64Reg base, X64Reg offset)
+inline OpArg MRegSum(X64Reg base, X64Reg offset)
 {
   return MComplex(base, offset, 1, 0);
 }
 
-constexpr OpArg Imm8(u8 imm)
+inline OpArg Imm8(u8 imm)
 {
   return OpArg(imm, SCALE_IMM8);
 }
-constexpr OpArg Imm16(u16 imm)
+inline OpArg Imm16(u16 imm)
 {
   return OpArg(imm, SCALE_IMM16);
 }  // rarely used
-constexpr OpArg Imm32(u32 imm)
+inline OpArg Imm32(u32 imm)
 {
   return OpArg(imm, SCALE_IMM32);
 }
-constexpr OpArg Imm64(u64 imm)
+inline OpArg Imm64(u64 imm)
 {
   return OpArg(imm, SCALE_IMM64);
 }
 inline OpArg ImmPtr(const void* imm)
 {
-  return Imm64(reinterpret_cast<u64>(imm));
+  return Imm64((u64)imm);
 }
 
 inline u32 PtrOffset(const void* ptr, const void* base = nullptr)
@@ -305,46 +329,35 @@ inline u32 PtrOffset(const void* ptr, const void* base = nullptr)
   s64 distance = (s64)ptr - (s64)base;
   if (distance >= 0x80000000LL || distance < -0x80000000LL)
   {
-    ASSERT_MSG(DYNA_REC, 0, "pointer offset out of range");
+    _assert_msg_(DYNA_REC, 0, "pointer offset out of range");
     return 0;
   }
 
   return (u32)distance;
 }
 
+// usage: int a[]; ARRAY_OFFSET(a,10)
+#define ARRAY_OFFSET(array, index) ((u32)((u64) & (array)[index] - (u64) & (array)[0]))
+// usage: struct {int e;} s; STRUCT_OFFSET(s,e)
+#define STRUCT_OFFSET(str, elem) ((u32)((u64) & (str).elem - (u64) & (str)))
+
 struct FixupBranch
 {
-  enum class Type
-  {
-    Branch8Bit,
-    Branch32Bit
-  };
-
   u8* ptr;
-  Type type;
+  int type;  // 0 = 8bit 1 = 32bit
 };
 
 class XEmitter
 {
   friend struct OpArg;  // for Write8 etc
 private:
-  // Pointer to memory where code will be emitted to.
-  u8* code = nullptr;
-
-  // Pointer past the end of the memory region we're allowed to emit to.
-  // Writes that would reach this memory are refused and will set the m_write_failed flag instead.
-  u8* m_code_end = nullptr;
-
-  bool flags_locked = false;
-
-  // Set to true when a write request happens that would write past m_code_end.
-  // Must be cleared with SetCodePtr() afterwards.
-  bool m_write_failed = false;
+  u8* code;
+  bool flags_locked;
 
   void CheckFlags();
 
   void Rex(int w, int r, int x, int b);
-  void WriteModRM(int mod, int reg, int rm);
+  void WriteModRM(int mod, int rm, int reg);
   void WriteSIB(int scale, int index, int base);
   void WriteSimple1Byte(int bits, u8 byte, X64Reg reg);
   void WriteSimple2Byte(int bits, u8 byte1, u8 byte2, X64Reg reg);
@@ -373,6 +386,7 @@ private:
   void WriteBMI2Op(int size, u8 opPrefix, u16 op, X64Reg regOp1, X64Reg regOp2, const OpArg& arg,
                    int extrabytes = 0);
   void WriteMOVBE(int bits, u8 op, X64Reg regOp, const OpArg& arg);
+  void WriteFloatLoadStore(int bits, FloatOp op, FloatOp op_80b, const OpArg& arg);
   void WriteNormalOp(int bits, NormalOp op, const OpArg& a1, const OpArg& a2);
 
   void ABI_CalculateFrameSize(BitSet32 mask, size_t rsp_alignment, size_t needed_frame_size,
@@ -385,27 +399,28 @@ protected:
   void Write64(u64 value);
 
 public:
-  XEmitter() = default;
-  explicit XEmitter(u8* code_ptr, u8* code_end) : code(code_ptr), m_code_end(code_end) {}
-  virtual ~XEmitter() = default;
-  void SetCodePtr(u8* ptr, u8* end, bool write_failed = false);
+  XEmitter()
+  {
+    code = nullptr;
+    flags_locked = false;
+  }
+  explicit XEmitter(u8* code_ptr)
+  {
+    code = code_ptr;
+    flags_locked = false;
+  }
+  virtual ~XEmitter() {}
+  void SetCodePtr(u8* ptr);
   void ReserveCodeSpace(int bytes);
-  u8* AlignCodeTo(size_t alignment);
-  u8* AlignCode4();
-  u8* AlignCode16();
-  u8* AlignCodePage();
+  const u8* AlignCodeTo(size_t alignment);
+  const u8* AlignCode4();
+  const u8* AlignCode16();
+  const u8* AlignCodePage();
   const u8* GetCodePtr() const;
   u8* GetWritableCodePtr();
-  const u8* GetCodeEnd() const;
-  u8* GetWritableCodeEnd();
 
   void LockFlags() { flags_locked = true; }
   void UnlockFlags() { flags_locked = false; }
-
-  // Should be checked after a block of code has been generated to see if the code has been
-  // successfully written to memory. Do not call the generated code when this returns true!
-  bool HasWriteFailed() const { return m_write_failed; }
-
   // Looking for one of these? It's BANNED!! Some instructions are slow on modern CPU
   // INC, DEC, LOOP, LOOPNE, LOOPE, ENTER, LEAVE, XCHG, XLAT, REP MOVSB/MOVSD, REP SCASD + other
   // string instr.,
@@ -440,29 +455,23 @@ public:
   void PUSHF();
   void POPF();
 
-  enum class Jump
-  {
-    Short,
-    Near,
-  };
-
   // Flow control
   void RET();
   void RET_FAST();
   void UD2();
-  [[nodiscard]] FixupBranch J(Jump jump = Jump::Short);
+  FixupBranch J(bool force5bytes = false);
 
-  void JMP(const u8* addr, Jump jump = Jump::Short);
+  void JMP(const u8* addr, bool force5Bytes = false);
   void JMPptr(const OpArg& arg);
   void JMPself();  // infinite loop!
 #ifdef CALL
 #undef CALL
 #endif
   void CALL(const void* fnptr);
-  [[nodiscard]] FixupBranch CALL();
+  FixupBranch CALL();
   void CALLptr(OpArg arg);
 
-  [[nodiscard]] FixupBranch J_CC(CCFlags conditionCode, Jump jump = Jump::Short);
+  FixupBranch J_CC(CCFlags conditionCode, bool force5bytes = false);
   void J_CC(CCFlags conditionCode, const u8* addr);
 
   void SetJumpTarget(const FixupBranch& branch);
@@ -481,12 +490,12 @@ public:
   void BSR(int bits, X64Reg dest, const OpArg& src);  // Top bit to bottom bit
 
   // Cache control
-  enum class PrefetchLevel : u8
+  enum PrefetchLevel
   {
-    NTA = 0,  // Non-temporal (data used once and only once)
-    T0 = 1,   // All cache levels
-    T1 = 2,   // Levels 2+ (aliased to T0 on AMD)
-    T2 = 3,   // Levels 3+ (aliased to T0 on AMD)
+    PF_NTA,  // Non-temporal (data used once and only once)
+    PF_T0,   // All cache levels
+    PF_T1,   // Levels 2+ (aliased to T0 on AMD)
+    PF_T2,   // Levels 3+ (aliased to T0 on AMD)
   };
   void PREFETCH(PrefetchLevel level, OpArg arg);
   void MOVNTI(int bits, const OpArg& dest, X64Reg src);
@@ -584,6 +593,31 @@ public:
   void REPNE();
   void FSOverride();
   void GSOverride();
+
+  // x87
+  enum x87StatusWordBits
+  {
+    x87_InvalidOperation = 0x1,
+    x87_DenormalizedOperand = 0x2,
+    x87_DivisionByZero = 0x4,
+    x87_Overflow = 0x8,
+    x87_Underflow = 0x10,
+    x87_Precision = 0x20,
+    x87_StackFault = 0x40,
+    x87_ErrorSummary = 0x80,
+    x87_C0 = 0x100,
+    x87_C1 = 0x200,
+    x87_C2 = 0x400,
+    x87_TopOfStack = 0x2000 | 0x1000 | 0x800,
+    x87_C3 = 0x4000,
+    x87_FPUBusy = 0x8000,
+  };
+
+  void FLD(int bits, const OpArg& src);
+  void FST(int bits, const OpArg& dest);
+  void FSTP(int bits, const OpArg& dest);
+  void FNSTSW_AX();
+  void FWAIT();
 
   // SSE/SSE2: Floating point arithmetic
   void ADDSS(X64Reg regOp, const OpArg& arg);
@@ -836,14 +870,6 @@ public:
   void BLENDPD(X64Reg dest, const OpArg& arg, u8 blend);
 
   // AVX
-  void VADDSS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
-  void VSUBSS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
-  void VMULSS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
-  void VDIVSS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
-  void VADDPS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
-  void VSUBPS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
-  void VMULPS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
-  void VDIVPS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VADDSD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VSUBSD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VMULSD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
@@ -854,14 +880,10 @@ public:
   void VDIVPD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VSQRTSD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VCMPPD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg, u8 compare);
-  void VSHUFPS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg, u8 shuffle);
   void VSHUFPD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg, u8 shuffle);
-  void VUNPCKLPS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VUNPCKLPD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VUNPCKHPD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VBLENDVPD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg, X64Reg mask);
-  void VBLENDPS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg, u8 blend);
-  void VBLENDPD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg, u8 blend);
 
   void VANDPS(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
   void VANDPD(X64Reg regOp1, X64Reg regOp2, const OpArg& arg);
@@ -988,10 +1010,11 @@ public:
   template <typename FunctionPointer>
   void ABI_CallFunction(FunctionPointer func)
   {
+#if !(defined(_MSC_VER) && _MSC_VER <= 1800)
     static_assert(std::is_pointer<FunctionPointer>() &&
                       std::is_function<std::remove_pointer_t<FunctionPointer>>(),
                   "Supplied type must be a function pointer.");
-
+#endif
     const void* ptr = reinterpret_cast<const void*>(func);
     const u64 address = reinterpret_cast<u64>(ptr);
     const u64 distance = address - (reinterpret_cast<u64>(code) + 5);
@@ -1076,13 +1099,6 @@ public:
   }
 
   template <typename FunctionPointer>
-  void ABI_CallFunctionP(FunctionPointer func, const void* param1)
-  {
-    MOV(64, R(ABI_PARAM1), Imm64(reinterpret_cast<u64>(param1)));
-    ABI_CallFunction(func);
-  }
-
-  template <typename FunctionPointer>
   void ABI_CallFunctionPC(FunctionPointer func, const void* param1, u32 param2)
   {
     MOV(64, R(ABI_PARAM1), Imm64(reinterpret_cast<u64>(param1)));
@@ -1108,30 +1124,11 @@ public:
     ABI_CallFunction(func);
   }
 
-  // Pass a pointer and register as a parameter.
-  template <typename FunctionPointer>
-  void ABI_CallFunctionPR(FunctionPointer func, const void* ptr, X64Reg reg1)
-  {
-    if (reg1 != ABI_PARAM2)
-      MOV(64, R(ABI_PARAM2), R(reg1));
-    MOV(64, R(ABI_PARAM1), Imm64(reinterpret_cast<u64>(ptr)));
-    ABI_CallFunction(func);
-  }
-
   // Pass two registers as parameters.
   template <typename FunctionPointer>
   void ABI_CallFunctionRR(FunctionPointer func, X64Reg reg1, X64Reg reg2)
   {
     MOVTwo(64, ABI_PARAM1, reg1, 0, ABI_PARAM2, reg2);
-    ABI_CallFunction(func);
-  }
-
-  // Pass a pointer and two registers as parameters.
-  template <typename FunctionPointer>
-  void ABI_CallFunctionPRR(FunctionPointer func, const void* ptr, X64Reg reg1, X64Reg reg2)
-  {
-    MOVTwo(64, ABI_PARAM2, reg1, 0, ABI_PARAM3, reg2);
-    MOV(64, R(ABI_PARAM1), Imm64(reinterpret_cast<u64>(ptr)));
     ABI_CallFunction(func);
   }
 
@@ -1141,17 +1138,6 @@ public:
     if (!arg1.IsSimpleReg(ABI_PARAM1))
       MOV(bits, R(ABI_PARAM1), arg1);
     MOV(32, R(ABI_PARAM2), Imm32(param2));
-    ABI_CallFunction(func);
-  }
-
-  template <typename FunctionPointer>
-  void ABI_CallFunctionPAC(int bits, FunctionPointer func, const void* ptr1, const Gen::OpArg& arg2,
-                           u32 param3)
-  {
-    if (!arg2.IsSimpleReg(ABI_PARAM2))
-      MOV(bits, R(ABI_PARAM2), arg2);
-    MOV(32, R(ABI_PARAM3), Imm32(param3));
-    MOV(64, R(ABI_PARAM1), Imm64(reinterpret_cast<u64>(ptr1)));
     ABI_CallFunction(func);
   }
 
@@ -1186,14 +1172,19 @@ public:
   }
 
   template <typename T, typename... Args>
-  void ABI_CallLambdaPC(const std::function<T(Args...)>* f, void* p1, u32 p2)
+  void ABI_CallLambdaC(const std::function<T(Args...)>* f, u32 p1)
   {
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+    // Double casting is required by VC++ for some reason.
+    auto trampoline = (void (*)()) & XEmitter::CallLambdaTrampoline<T, Args...>;
+#else
     auto trampoline = &XEmitter::CallLambdaTrampoline<T, Args...>;
-    ABI_CallFunctionPPC(trampoline, reinterpret_cast<const void*>(f), p1, p2);
+#endif
+    ABI_CallFunctionPC(trampoline, reinterpret_cast<const void*>(f), p1);
   }
 };  // class XEmitter
 
-class X64CodeBlock : public Common::CodeBlock<XEmitter>
+class X64CodeBlock : public CodeBlock<XEmitter>
 {
 private:
   void PoisonMemory() override
@@ -1203,4 +1194,4 @@ private:
   }
 };
 
-}  // namespace Gen
+}  // namespace

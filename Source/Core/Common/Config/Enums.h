@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -7,15 +8,15 @@
 
 namespace Config
 {
-// Layers in ascending order of priority.
 enum class LayerType
 {
   Base,
-  CommandLine,
   GlobalGame,
   LocalGame,
+  VRGame,
   Movie,
   Netplay,
+  CommandLine,
   CurrentRun,
   Meta,
 };
@@ -29,20 +30,12 @@ enum class System
   GCKeyboard,
   GFX,
   Logger,
-  DualShockUDPClient,
-  FreeLook,
-  Session,
-  GameSettingsOnly,
-  Achievements,
+  Debugger,
+  UI,
 };
 
-constexpr std::array<LayerType, 7> SEARCH_ORDER{{
-    LayerType::CurrentRun,
-    LayerType::Netplay,
-    LayerType::Movie,
-    LayerType::LocalGame,
-    LayerType::GlobalGame,
-    LayerType::CommandLine,
-    LayerType::Base,
+constexpr std::array<LayerType, 8> SEARCH_ORDER{{
+    LayerType::CurrentRun, LayerType::CommandLine, LayerType::Movie, LayerType::Netplay,
+    LayerType::VRGame, LayerType::LocalGame, LayerType::GlobalGame, LayerType::Base,
 }};
-}  // namespace Config
+}

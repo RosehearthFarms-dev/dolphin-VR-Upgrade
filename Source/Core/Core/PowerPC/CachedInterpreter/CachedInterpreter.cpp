@@ -1,5 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/PowerPC/CachedInterpreter/CachedInterpreter.h"
 
@@ -10,71 +11,41 @@
 #include "Core/HLE/HLE.h"
 #include "Core/HW/CPU.h"
 #include "Core/PowerPC/Gekko.h"
-#include "Core/PowerPC/Interpreter/Interpreter.h"
-#include "Core/PowerPC/Jit64Common/Jit64Constants.h"
+#include "Core/PowerPC/Jit64Common/Jit64Base.h"
 #include "Core/PowerPC/PPCAnalyst.h"
 #include "Core/PowerPC/PowerPC.h"
-#include "Core/System.h"
 
 struct CachedInterpreter::Instruction
 {
-  using CommonCallback = void (*)(UGeckoInstruction);
-  using ConditionalCallback = bool (*)(u32);
-  using InterpreterCallback = void (*)(Interpreter&, UGeckoInstruction);
-  using CachedInterpreterCallback = void (*)(CachedInterpreter&, UGeckoInstruction);
-  using ConditionalCachedInterpreterCallback = bool (*)(CachedInterpreter&, u32);
+  typedef void (*CommonCallback)(UGeckoInstruction);
+  typedef bool (*ConditionalCallback)(u32 data);
 
-  Instruction() {}
+  Instruction() : type(INSTRUCTION_ABORT) {}
   Instruction(const CommonCallback c, UGeckoInstruction i)
-      : common_callback(c), data(i.hex), type(Type::Common)
+      : common_callback(c), data(i.hex), type(INSTRUCTION_TYPE_COMMON)
   {
   }
 
   Instruction(const ConditionalCallback c, u32 d)
-      : conditional_callback(c), data(d), type(Type::Conditional)
+      : conditional_callback(c), data(d), type(INSTRUCTION_TYPE_CONDITIONAL)
   {
   }
-
-  Instruction(const InterpreterCallback c, UGeckoInstruction i)
-      : interpreter_callback(c), data(i.hex), type(Type::Interpreter)
-  {
-  }
-
-  Instruction(const CachedInterpreterCallback c, UGeckoInstruction i)
-      : cached_interpreter_callback(c), data(i.hex), type(Type::CachedInterpreter)
-  {
-  }
-
-  Instruction(const ConditionalCachedInterpreterCallback c, u32 d)
-      : conditional_cached_interpreter_callback(c), data(d),
-        type(Type::ConditionalCachedInterpreter)
-  {
-  }
-
-  enum class Type
-  {
-    Abort,
-    Common,
-    Conditional,
-    Interpreter,
-    CachedInterpreter,
-    ConditionalCachedInterpreter,
-  };
 
   union
   {
-    const CommonCallback common_callback = nullptr;
+    const CommonCallback common_callback;
     const ConditionalCallback conditional_callback;
-    const InterpreterCallback interpreter_callback;
-    const CachedInterpreterCallback cached_interpreter_callback;
-    const ConditionalCachedInterpreterCallback conditional_cached_interpreter_callback;
   };
-
-  u32 data = 0;
-  Type type = Type::Abort;
+  u32 data;
+  enum
+  {
+    INSTRUCTION_ABORT,
+    INSTRUCTION_TYPE_COMMON,
+    INSTRUCTION_TYPE_CONDITIONAL,
+  } type;
 };
 
-CachedInterpreter::CachedInterpreter(Core::System& system) : JitBase(system)
+CachedInterpreter::CachedInterpreter() : code_buffer(32000)
 {
 }
 
@@ -82,13 +53,12 @@ CachedInterpreter::~CachedInterpreter() = default;
 
 void CachedInterpreter::Init()
 {
-  RefreshConfig();
-
   m_code.reserve(CODE_SIZE / sizeof(Instruction));
 
   jo.enableBlocklink = false;
 
   m_block_cache.Init();
+  UpdateMemoryOptions();
 
   code_block.m_stats = &js.st;
   code_block.m_gpa = &js.gpa;
@@ -100,9 +70,9 @@ void CachedInterpreter::Shutdown()
   m_block_cache.Shutdown();
 }
 
-u8* CachedInterpreter::GetCodePtr()
+const u8* CachedInterpreter::GetCodePtr() const
 {
-  return reinterpret_cast<u8*>(m_code.data() + m_code.size());
+  return reinterpret_cast<const u8*>(m_code.data() + m_code.size());
 }
 
 void CachedInterpreter::ExecuteOneBlock()
@@ -110,42 +80,27 @@ void CachedInterpreter::ExecuteOneBlock()
   const u8* normal_entry = m_block_cache.Dispatch();
   if (!normal_entry)
   {
-    Jit(m_ppc_state.pc);
+    Jit(PC);
     return;
   }
 
   const Instruction* code = reinterpret_cast<const Instruction*>(normal_entry);
-  auto& interpreter = m_system.GetInterpreter();
 
-  for (; code->type != Instruction::Type::Abort; ++code)
+  for (; code->type != Instruction::INSTRUCTION_ABORT; ++code)
   {
     switch (code->type)
     {
-    case Instruction::Type::Common:
+    case Instruction::INSTRUCTION_TYPE_COMMON:
       code->common_callback(UGeckoInstruction(code->data));
       break;
 
-    case Instruction::Type::Conditional:
+    case Instruction::INSTRUCTION_TYPE_CONDITIONAL:
       if (code->conditional_callback(code->data))
         return;
       break;
 
-    case Instruction::Type::Interpreter:
-      code->interpreter_callback(interpreter, UGeckoInstruction(code->data));
-      break;
-
-    case Instruction::Type::CachedInterpreter:
-      code->cached_interpreter_callback(*this, UGeckoInstruction(code->data));
-      break;
-
-    case Instruction::Type::ConditionalCachedInterpreter:
-      if (code->conditional_cached_interpreter_callback(*this, code->data))
-        return;
-      break;
-
     default:
-      ERROR_LOG_FMT(POWERPC, "Unknown CachedInterpreter Instruction: {}",
-                    static_cast<int>(code->type));
+      ERROR_LOG(POWERPC, "Unknown CachedInterpreter Instruction: %d", code->type);
       break;
     }
   }
@@ -153,135 +108,65 @@ void CachedInterpreter::ExecuteOneBlock()
 
 void CachedInterpreter::Run()
 {
-  auto& core_timing = m_system.GetCoreTiming();
-  auto& cpu = m_system.GetCPU();
-
-  const CPU::State* state_ptr = cpu.GetStatePtr();
-  while (cpu.GetState() == CPU::State::Running)
+  while (CPU::GetState() == CPU::State::Running)
   {
     // Start new timing slice
     // NOTE: Exceptions may change PC
-    core_timing.Advance();
+    CoreTiming::Advance();
 
     do
     {
       ExecuteOneBlock();
-    } while (m_ppc_state.downcount > 0 && *state_ptr == CPU::State::Running);
+    } while (PowerPC::ppcState.downcount > 0);
   }
 }
 
 void CachedInterpreter::SingleStep()
 {
   // Enter new timing slice
-  m_system.GetCoreTiming().Advance();
+  CoreTiming::Advance();
   ExecuteOneBlock();
 }
 
-void CachedInterpreter::EndBlock(CachedInterpreter& cached_interpreter, UGeckoInstruction data)
+static void EndBlock(UGeckoInstruction data)
 {
-  auto& ppc_state = cached_interpreter.m_ppc_state;
-  ppc_state.pc = ppc_state.npc;
-  ppc_state.downcount -= data.hex;
-  PowerPC::UpdatePerformanceMonitor(data.hex, 0, 0, ppc_state);
+  PC = NPC;
+  PowerPC::ppcState.downcount -= data.hex;
 }
 
-void CachedInterpreter::UpdateNumLoadStoreInstructions(CachedInterpreter& cached_interpreter,
-                                                       UGeckoInstruction data)
+static void WritePC(UGeckoInstruction data)
 {
-  PowerPC::UpdatePerformanceMonitor(0, data.hex, 0, cached_interpreter.m_ppc_state);
+  PC = data.hex;
+  NPC = data.hex + 4;
 }
 
-void CachedInterpreter::UpdateNumFloatingPointInstructions(CachedInterpreter& cached_interpreter,
-                                                           UGeckoInstruction data)
+static void WriteBrokenBlockNPC(UGeckoInstruction data)
 {
-  PowerPC::UpdatePerformanceMonitor(0, 0, data.hex, cached_interpreter.m_ppc_state);
+  NPC = data.hex;
 }
 
-void CachedInterpreter::WritePC(CachedInterpreter& cached_interpreter, UGeckoInstruction data)
+static bool CheckFPU(u32 data)
 {
-  auto& ppc_state = cached_interpreter.m_ppc_state;
-  ppc_state.pc = data.hex;
-  ppc_state.npc = data.hex + 4;
-}
-
-void CachedInterpreter::WriteBrokenBlockNPC(CachedInterpreter& cached_interpreter,
-                                            UGeckoInstruction data)
-{
-  cached_interpreter.m_ppc_state.npc = data.hex;
-}
-
-bool CachedInterpreter::CheckFPU(CachedInterpreter& cached_interpreter, u32 data)
-{
-  auto& ppc_state = cached_interpreter.m_ppc_state;
-  if (!ppc_state.msr.FP)
+  UReg_MSR msr{MSR};
+  if (!msr.FP)
   {
-    ppc_state.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
-    cached_interpreter.m_system.GetPowerPC().CheckExceptions();
-    ppc_state.downcount -= data;
+    PowerPC::ppcState.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
+    PowerPC::CheckExceptions();
+    PowerPC::ppcState.downcount -= data;
     return true;
   }
   return false;
 }
 
-bool CachedInterpreter::CheckDSI(CachedInterpreter& cached_interpreter, u32 data)
+static bool CheckDSI(u32 data)
 {
-  auto& ppc_state = cached_interpreter.m_ppc_state;
-  if (ppc_state.Exceptions & EXCEPTION_DSI)
+  if (PowerPC::ppcState.Exceptions & EXCEPTION_DSI)
   {
-    cached_interpreter.m_system.GetPowerPC().CheckExceptions();
-    ppc_state.downcount -= data;
+    PowerPC::CheckExceptions();
+    PowerPC::ppcState.downcount -= data;
     return true;
   }
   return false;
-}
-
-bool CachedInterpreter::CheckProgramException(CachedInterpreter& cached_interpreter, u32 data)
-{
-  auto& ppc_state = cached_interpreter.m_ppc_state;
-  if (ppc_state.Exceptions & EXCEPTION_PROGRAM)
-  {
-    cached_interpreter.m_system.GetPowerPC().CheckExceptions();
-    ppc_state.downcount -= data;
-    return true;
-  }
-  return false;
-}
-
-bool CachedInterpreter::CheckBreakpoint(CachedInterpreter& cached_interpreter, u32 data)
-{
-  cached_interpreter.m_system.GetPowerPC().CheckBreakPoints();
-  if (cached_interpreter.m_system.GetCPU().GetState() != CPU::State::Running)
-  {
-    cached_interpreter.m_ppc_state.downcount -= data;
-    return true;
-  }
-  return false;
-}
-
-bool CachedInterpreter::CheckIdle(CachedInterpreter& cached_interpreter, u32 idle_pc)
-{
-  if (cached_interpreter.m_ppc_state.npc == idle_pc)
-  {
-    cached_interpreter.m_system.GetCoreTiming().Idle();
-  }
-  return false;
-}
-
-bool CachedInterpreter::HandleFunctionHooking(u32 address)
-{
-  const auto result = HLE::TryReplaceFunction(address);
-  if (!result)
-    return false;
-
-  m_code.emplace_back(WritePC, address);
-  m_code.emplace_back(Interpreter::HLEFunction, result.hook_index);
-
-  if (result.type != HLE::HookType::Replace)
-    return false;
-
-  m_code.emplace_back(EndBlock, js.downcountAmount);
-  m_code.emplace_back();
-  return true;
 }
 
 void CachedInterpreter::Jit(u32 address)
@@ -292,91 +177,85 @@ void CachedInterpreter::Jit(u32 address)
     ClearCache();
   }
 
-  const u32 nextPC =
-      analyzer.Analyze(m_ppc_state.pc, &code_block, &m_code_buffer, m_code_buffer.size());
+  u32 nextPC = analyzer.Analyze(PC, &code_block, &code_buffer, code_buffer.GetSize());
   if (code_block.m_memory_exception)
   {
     // Address of instruction could not be translated
-    m_ppc_state.npc = nextPC;
-    m_ppc_state.Exceptions |= EXCEPTION_ISI;
-    m_system.GetPowerPC().CheckExceptions();
-    WARN_LOG_FMT(POWERPC, "ISI exception at {:#010x}", nextPC);
+    NPC = nextPC;
+    PowerPC::ppcState.Exceptions |= EXCEPTION_ISI;
+    PowerPC::CheckExceptions();
+    WARN_LOG(POWERPC, "ISI exception at 0x%08x", nextPC);
     return;
   }
 
-  JitBlock* b = m_block_cache.AllocateBlock(m_ppc_state.pc);
+  JitBlock* b = m_block_cache.AllocateBlock(PC);
 
-  js.blockStart = m_ppc_state.pc;
+  js.blockStart = PC;
   js.firstFPInstructionFound = false;
   js.fifoBytesSinceCheck = 0;
   js.downcountAmount = 0;
-  js.numLoadStoreInst = 0;
-  js.numFloatingPointInst = 0;
   js.curBlock = b;
 
+  PPCAnalyst::CodeOp* ops = code_buffer.codebuffer;
+
+  b->checkedEntry = GetCodePtr();
   b->normalEntry = GetCodePtr();
 
   for (u32 i = 0; i < code_block.m_num_instructions; i++)
   {
-    PPCAnalyst::CodeOp& op = m_code_buffer[i];
+    js.downcountAmount += ops[i].opinfo->numCycles;
 
-    js.downcountAmount += op.opinfo->num_cycles;
-    if (op.opinfo->flags & FL_LOADSTORE)
-      ++js.numLoadStoreInst;
-    if (op.opinfo->flags & FL_USE_FPU)
-      ++js.numFloatingPointInst;
-
-    if (HandleFunctionHooking(op.address))
-      break;
-
-    if (!op.skip)
+    u32 function = HLE::GetFirstFunctionIndex(ops[i].address);
+    if (function != 0)
     {
-      const bool breakpoint =
-          m_enable_debugging &&
-          m_system.GetPowerPC().GetBreakPoints().IsAddressBreakPoint(op.address);
-      const bool check_fpu = (op.opinfo->flags & FL_USE_FPU) && !js.firstFPInstructionFound;
-      const bool endblock = (op.opinfo->flags & FL_ENDBLOCK) != 0;
-      const bool memcheck = (op.opinfo->flags & FL_LOADSTORE) && jo.memcheck;
-      const bool check_program_exception = !endblock && ShouldHandleFPExceptionForInstruction(&op);
-      const bool idle_loop = op.branchIsIdleLoop;
+      int type = HLE::GetFunctionTypeByIndex(function);
+      if (type == HLE::HLE_HOOK_START || type == HLE::HLE_HOOK_REPLACE)
+      {
+        int flags = HLE::GetFunctionFlagsByIndex(function);
+        if (HLE::IsEnabled(flags))
+        {
+          m_code.emplace_back(WritePC, ops[i].address);
+          m_code.emplace_back(Interpreter::HLEFunction, function);
+          if (type == HLE::HLE_HOOK_REPLACE)
+          {
+            m_code.emplace_back(EndBlock, js.downcountAmount);
+            m_code.emplace_back();
+            break;
+          }
+        }
+      }
+    }
 
-      if (breakpoint || check_fpu || endblock || memcheck || check_program_exception)
-        m_code.emplace_back(WritePC, op.address);
-
-      if (breakpoint)
-        m_code.emplace_back(CheckBreakpoint, js.downcountAmount);
+    if (!ops[i].skip)
+    {
+      bool check_fpu = (ops[i].opinfo->flags & FL_USE_FPU) && !js.firstFPInstructionFound;
+      bool endblock = (ops[i].opinfo->flags & FL_ENDBLOCK) != 0;
+      bool memcheck = (ops[i].opinfo->flags & FL_LOADSTORE) && jo.memcheck;
 
       if (check_fpu)
       {
+        m_code.emplace_back(WritePC, ops[i].address);
         m_code.emplace_back(CheckFPU, js.downcountAmount);
         js.firstFPInstructionFound = true;
       }
 
-      m_code.emplace_back(Interpreter::GetInterpreterOp(op.inst), op.inst);
+      if (endblock || memcheck)
+        m_code.emplace_back(WritePC, ops[i].address);
+      m_code.emplace_back(GetInterpreterOp(ops[i].inst), ops[i].inst);
       if (memcheck)
         m_code.emplace_back(CheckDSI, js.downcountAmount);
-      if (check_program_exception)
-        m_code.emplace_back(CheckProgramException, js.downcountAmount);
-      if (idle_loop)
-        m_code.emplace_back(CheckIdle, js.blockStart);
       if (endblock)
-      {
         m_code.emplace_back(EndBlock, js.downcountAmount);
-        m_code.emplace_back(UpdateNumLoadStoreInstructions, js.numLoadStoreInst);
-        m_code.emplace_back(UpdateNumFloatingPointInstructions, js.numFloatingPointInst);
-      }
     }
   }
   if (code_block.m_broken)
   {
     m_code.emplace_back(WriteBrokenBlockNPC, nextPC);
     m_code.emplace_back(EndBlock, js.downcountAmount);
-    m_code.emplace_back(UpdateNumLoadStoreInstructions, js.numLoadStoreInst);
-    m_code.emplace_back(UpdateNumFloatingPointInstructions, js.numFloatingPointInst);
   }
   m_code.emplace_back();
 
-  b->codeSize = static_cast<u32>(GetCodePtr() - b->normalEntry);
+  b->codeSize = (u32)(GetCodePtr() - b->checkedEntry);
   b->originalSize = code_block.m_num_instructions;
 
   m_block_cache.FinalizeBlock(*b, jo.enableBlocklink, code_block.m_physical_addresses);
@@ -386,5 +265,5 @@ void CachedInterpreter::ClearCache()
 {
   m_code.clear();
   m_block_cache.Clear();
-  RefreshConfig();
+  UpdateMemoryOptions();
 }

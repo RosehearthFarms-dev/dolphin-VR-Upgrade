@@ -1,13 +1,13 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/DSP/DSPAccelerator.h"
-
-#include <algorithm>
 
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
+#include "Common/MathUtil.h"
 
 namespace DSP
 {
@@ -26,7 +26,7 @@ u16 Accelerator::ReadD3()
     m_current_address++;
     break;
   default:
-    ERROR_LOG_FMT(DSPLLE, "dsp_read_aram_d3() - unknown format {:#x}", m_sample_format);
+    ERROR_LOG(DSPLLE, "dsp_read_aram_d3() - unknown format 0x%x", m_sample_format);
     break;
   }
 
@@ -53,12 +53,12 @@ void Accelerator::WriteD3(u16 value)
     m_current_address++;
     break;
   default:
-    ERROR_LOG_FMT(DSPLLE, "dsp_write_aram_d3() - unknown format {:#x}", m_sample_format);
+    ERROR_LOG(DSPLLE, "dsp_write_aram_d3() - unknown format 0x%x", m_sample_format);
     break;
   }
 }
 
-u16 Accelerator::Read(const s16* coefs)
+u16 Accelerator::Read(s16* coefs)
 {
   if (m_reads_stopped)
     return 0x0000;
@@ -89,7 +89,7 @@ u16 Accelerator::Read(const s16* coefs)
       temp -= 16;
 
     s32 val32 = (scale * temp) + ((0x400 + coef1 * m_yn1 + coef2 * m_yn2) >> 11);
-    val = static_cast<s16>(std::clamp<s32>(val32, -0x7FFF, 0x7FFF));
+    val = static_cast<s16>(MathUtil::Clamp<s32>(val32, -0x7FFF, 0x7FFF));
     step_size_bytes = 2;
 
     m_yn2 = m_yn1;
@@ -132,7 +132,7 @@ u16 Accelerator::Read(const s16* coefs)
     m_current_address += 1;
     break;
   default:
-    ERROR_LOG_FMT(DSPLLE, "dsp_read_accelerator() - unknown format {:#x}", m_sample_format);
+    ERROR_LOG(DSPLLE, "dsp_read_accelerator() - unknown format 0x%x", m_sample_format);
     step_size_bytes = 2;
     m_current_address += 1;
     val = 0;

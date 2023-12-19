@@ -1,18 +1,23 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/HW/SI/SI_DeviceNull.h"
 
+#include <cstring>
+
 namespace SerialInterface
 {
-CSIDevice_Null::CSIDevice_Null(Core::System& system, SIDevices device, int device_number)
-    : ISIDevice{system, device, device_number}
+CSIDevice_Null::CSIDevice_Null(SIDevices device, int device_number)
+    : ISIDevice{device, device_number}
 {
 }
 
-int CSIDevice_Null::RunBuffer(u8* buffer, int request_length)
+int CSIDevice_Null::RunBuffer(u8* buffer, int length)
 {
-  return -1;
+  constexpr u32 reply = SI_ERROR_NO_RESPONSE;
+  std::memcpy(buffer, &reply, sizeof(reply));
+  return 4;
 }
 
 bool CSIDevice_Null::GetData(u32& hi, u32& low)

@@ -1,15 +1,13 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <memory>
-#include <optional>
-#include <string>
 #include <vector>
 
 #include "Common/CommonTypes.h"
-#include "Common/WindowSystemInfo.h"
 #include "VideoBackends/Vulkan/Constants.h"
 #include "VideoCommon/VideoConfig.h"
 
@@ -25,8 +23,8 @@ public:
   static bool CheckValidationLayerAvailablility();
 
   // Helper method to create a Vulkan instance.
-  static VkInstance CreateVulkanInstance(WindowSystemType wstype, bool enable_debug_utils,
-                                         bool enable_validation_layer, u32* out_vk_api_version);
+  static VkInstance CreateVulkanInstance(bool enable_surface, bool enable_debug_report,
+                                         bool enable_validation_layer);
 
   // Returns a list of Vulkan-compatible GPUs.
   using GPUList = std::vector<VkPhysicalDevice>;
@@ -46,12 +44,12 @@ public:
   // This assumes that PopulateBackendInfo and PopulateBackendInfoAdapters has already
   // been called for the specified VideoConfig.
   static std::unique_ptr<VulkanContext> Create(VkInstance instance, VkPhysicalDevice gpu,
-                                               VkSurfaceKHR surface, bool enable_debug_utils,
-                                               bool enable_validation_layer, u32 api_version);
+                                               VkSurfaceKHR surface, bool enable_debug_reports,
+                                               bool enable_validation_layer);
 
   // Enable/disable debug message runtime.
-  bool EnableDebugUtils();
-  void DisableDebugUtils();
+  bool EnableDebugReports();
+  void DisableDebugReports();
 
   // Global state accessors
   VkInstance GetVulkanInstance() const { return m_instance; }
@@ -77,13 +75,15 @@ public:
   {
     return m_device_features.samplerAnisotropy == VK_TRUE;
   }
+  bool SupportsGeometryShaders() const { return m_device_features.geometryShader == VK_TRUE; }
+  bool SupportsDualSourceBlend() const { return m_device_features.dualSrcBlend == VK_TRUE; }
+  bool SupportsLogicOps() const { return m_device_features.logicOp == VK_TRUE; }
+  bool SupportsBoundingBox() const { return m_device_features.fragmentStoresAndAtomics == VK_TRUE; }
   bool SupportsPreciseOcclusionQueries() const
   {
     return m_device_features.occlusionQueryPrecise == VK_TRUE;
   }
-  u32 GetShaderSubgroupSize() const { return m_shader_subgroup_size; }
-  bool SupportsShaderSubgroupOperations() const { return m_supports_shader_subgroup_operations; }
-
+  bool SupportsNVGLSLExtension() const { return m_supports_nv_glsl_extension; }
   // Helpers for getting constants
   VkDeviceSize GetUniformBufferAlignment() const
   {
@@ -98,36 +98,26 @@ public:
     return m_device_properties.limits.bufferImageGranularity;
   }
   float GetMaxSamplerAnisotropy() const { return m_device_properties.limits.maxSamplerAnisotropy; }
+  // Finds a memory type index for the specified memory properties and the bits returned by
+  // vkGetImageMemoryRequirements
+  bool GetMemoryType(u32 bits, VkMemoryPropertyFlags properties, u32* out_type_index);
+  u32 GetMemoryType(u32 bits, VkMemoryPropertyFlags properties);
 
-  // Returns true if the specified extension is supported and enabled.
-  bool SupportsDeviceExtension(const char* name) const;
-
-  // Returns true if exclusive fullscreen is supported for the given surface.
-  bool SupportsExclusiveFullscreen(const WindowSystemInfo& wsi, VkSurfaceKHR surface);
-
-  VmaAllocator GetMemoryAllocator() const { return m_allocator; }
-
-#ifdef WIN32
-  // Returns the platform-specific exclusive fullscreen structure.
-  VkSurfaceFullScreenExclusiveWin32InfoEXT
-  GetPlatformExclusiveFullscreenInfo(const WindowSystemInfo& wsi);
-#endif
+  // Finds a memory type for upload or readback buffers.
+  u32 GetUploadMemoryType(u32 bits, bool* is_coherent = nullptr);
+  u32 GetReadbackMemoryType(u32 bits, bool* is_coherent = nullptr, bool* is_cached = nullptr);
 
 private:
-  static bool SelectInstanceExtensions(std::vector<const char*>* extension_list,
-                                       WindowSystemType wstype, bool enable_debug_utils,
-                                       bool validation_layer_enabled);
-  bool SelectDeviceExtensions(bool enable_surface);
+  using ExtensionList = std::vector<const char*>;
+  static bool SelectInstanceExtensions(ExtensionList* extension_list, bool enable_surface,
+                                       bool enable_debug_report);
+  bool SelectDeviceExtensions(ExtensionList* extension_list, bool enable_surface);
   bool SelectDeviceFeatures();
   bool CreateDevice(VkSurfaceKHR surface, bool enable_validation_layer);
-  void InitDriverDetails();
-  void PopulateShaderSubgroupSupport();
-  bool CreateAllocator(u32 vk_api_version);
 
   VkInstance m_instance = VK_NULL_HANDLE;
   VkPhysicalDevice m_physical_device = VK_NULL_HANDLE;
   VkDevice m_device = VK_NULL_HANDLE;
-  VmaAllocator m_allocator = VK_NULL_HANDLE;
 
   VkQueue m_graphics_queue = VK_NULL_HANDLE;
   u32 m_graphics_queue_family_index = 0;
@@ -135,16 +125,13 @@ private:
   u32 m_present_queue_family_index = 0;
   VkQueueFamilyProperties m_graphics_queue_properties = {};
 
-  VkDebugUtilsMessengerEXT m_debug_utils_messenger = VK_NULL_HANDLE;
+  VkDebugReportCallbackEXT m_debug_report_callback = VK_NULL_HANDLE;
 
   VkPhysicalDeviceFeatures m_device_features = {};
   VkPhysicalDeviceProperties m_device_properties = {};
   VkPhysicalDeviceMemoryProperties m_device_memory_properties = {};
 
-  u32 m_shader_subgroup_size = 1;
-  bool m_supports_shader_subgroup_operations = false;
-
-  std::vector<std::string> m_device_extensions;
+  bool m_supports_nv_glsl_extension = false;
 };
 
 extern std::unique_ptr<VulkanContext> g_vulkan_context;

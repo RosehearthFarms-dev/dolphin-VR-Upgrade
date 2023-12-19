@@ -1,26 +1,26 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "Common/Config/ConfigInfo.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <cstring>
 
 #include "Common/CommonFuncs.h"
+#include "Common/Config/ConfigInfo.h"
 
 namespace Config
 {
-bool Location::operator==(const Location& other) const
+bool ConfigLocation::operator==(const ConfigLocation& other) const
 {
   return system == other.system && strcasecmp(section.c_str(), other.section.c_str()) == 0 &&
          strcasecmp(key.c_str(), other.key.c_str()) == 0;
 }
 
-bool Location::operator!=(const Location& other) const
+bool ConfigLocation::operator!=(const ConfigLocation& other) const
 {
   return !(*this == other);
 }
 
-bool Location::operator<(const Location& other) const
+bool ConfigLocation::operator<(const ConfigLocation& other) const
 {
   if (system != other.system)
     return system < other.system;
@@ -32,4 +32,4 @@ bool Location::operator<(const Location& other) const
   const int key_compare = strcasecmp(key.c_str(), other.key.c_str());
   return key_compare < 0;
 }
-}  // namespace Config
+}

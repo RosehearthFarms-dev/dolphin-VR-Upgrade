@@ -1,12 +1,12 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <mutex>
 
 #include "Common/CommonTypes.h"
-#include "Common/WorkQueueThread.h"
 #include "Core/HW/EXI/EXI_Device.h"
 
 struct cubeb;
@@ -17,7 +17,7 @@ namespace ExpansionInterface
 class CEXIMic : public IEXIDevice
 {
 public:
-  CEXIMic(Core::System& system, const int index);
+  CEXIMic(const int index);
   virtual ~CEXIMic();
   void SetCS(int cs) override;
   bool IsInterruptSet() override;
@@ -60,17 +60,6 @@ private:
     };
   };
 
-  static long DataCallback(cubeb_stream* stream, void* user_data, const void* input_buffer,
-                           void* output_buffer, long nframes);
-
-  void TransferByte(u8& byte) override;
-
-  void StreamInit();
-  void StreamTerminate();
-  void StreamStart();
-  void StreamStop();
-  void StreamReadOne();
-
   // 64 is the max size, can be 16 or 32 as well
   int ring_pos;
   u8 ring_buffer[64 * sample_size];
@@ -84,6 +73,14 @@ private:
   std::shared_ptr<cubeb> m_cubeb_ctx = nullptr;
   cubeb_stream* m_cubeb_stream = nullptr;
 
+  void StreamLog(const char* msg);
+  void StreamInit();
+  void StreamTerminate();
+  void StreamStart();
+  void StreamStop();
+  void StreamReadOne();
+
+public:
   UStatus status;
 
   std::mutex ring_lock;
@@ -101,10 +98,7 @@ private:
   int stream_rpos;
   int samples_avail;
 
-#ifdef _WIN32
-  Common::WorkQueueThread<std::function<void()>> m_work_queue;
-  bool m_coinit_success = false;
-  bool m_should_couninit = false;
-#endif
+protected:
+  void TransferByte(u8& byte) override;
 };
 }  // namespace ExpansionInterface

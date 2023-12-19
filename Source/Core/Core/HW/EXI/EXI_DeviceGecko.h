@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -49,7 +50,7 @@ private:
 class CEXIGecko : public IEXIDevice, private GeckoSockServer
 {
 public:
-  explicit CEXIGecko(Core::System& system);
+  CEXIGecko() {}
   bool IsPresent() const override { return true; }
   void ImmReadWrite(u32& _uData, u32 _uSize) override;
 

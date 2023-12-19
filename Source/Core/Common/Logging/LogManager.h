@@ -1,25 +1,21 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <array>
 #include <cstdarg>
-#include <map>
-#include <string>
 
 #include "Common/BitSet.h"
-#include "Common/EnumMap.h"
 #include "Common/Logging/Log.h"
 
-namespace Common::Log
-{
 // pure virtual interface
 class LogListener
 {
 public:
-  virtual ~LogListener() = default;
-  virtual void Log(LogLevel level, const char* msg) = 0;
+  virtual ~LogListener() {}
+  virtual void Log(LogTypes::LOG_LEVELS, const char* msg) = 0;
 
   enum LISTENER
   {
@@ -38,20 +34,19 @@ public:
   static void Init();
   static void Shutdown();
 
-  void Log(LogLevel level, LogType type, const char* file, int line, const char* message);
-  void LogWithFullPath(LogLevel level, LogType type, const char* file, int line,
-                       const char* message);
+  void Log(LogTypes::LOG_LEVELS level, LogTypes::LOG_TYPE type, const char* file, int line,
+           const char* fmt, va_list args);
+  void LogWithFullPath(LogTypes::LOG_LEVELS level, LogTypes::LOG_TYPE type, const char* file,
+                       int line, const char* fmt, va_list args);
 
-  LogLevel GetLogLevel() const;
-  void SetLogLevel(LogLevel level);
+  LogTypes::LOG_LEVELS GetLogLevel() const;
+  void SetLogLevel(LogTypes::LOG_LEVELS level);
 
-  void SetEnable(LogType type, bool enable);
-  bool IsEnabled(LogType type, LogLevel level = LogLevel::LNOTICE) const;
+  void SetEnable(LogTypes::LOG_TYPE type, bool enable);
+  bool IsEnabled(LogTypes::LOG_TYPE type, LogTypes::LOG_LEVELS level = LogTypes::LNOTICE) const;
 
-  std::map<std::string, std::string> GetLogTypes();
-
-  const char* GetShortName(LogType type) const;
-  const char* GetFullName(LogType type) const;
+  const char* GetShortName(LogTypes::LOG_TYPE type) const;
+  const char* GetFullName(LogTypes::LOG_TYPE type) const;
 
   void RegisterListener(LogListener::LISTENER id, LogListener* listener);
   void EnableListener(LogListener::LISTENER id, bool enable);
@@ -65,6 +60,11 @@ private:
     const char* m_short_name;
     const char* m_full_name;
     bool m_enable = false;
+    LogContainer() {}
+    LogContainer(const char* short_name, const char* full_name)
+        : m_short_name(short_name), m_full_name(full_name)
+    {
+    }
   };
 
   LogManager();
@@ -75,12 +75,9 @@ private:
   LogManager(LogManager&&) = delete;
   LogManager& operator=(LogManager&&) = delete;
 
-  static std::string GetTimestamp();
-
-  LogLevel m_level;
-  EnumMap<LogContainer, LAST_LOG_TYPE> m_log{};
-  std::array<LogListener*, LogListener::NUMBER_OF_LISTENERS> m_listeners{};
+  LogTypes::LOG_LEVELS m_level;
+  std::array<LogContainer, LogTypes::NUMBER_OF_LOGS> m_log;
+  std::array<LogListener*, LogListener::NUMBER_OF_LISTENERS> m_listeners;
   BitSet32 m_listener_ids;
   size_t m_path_cutoff_point = 0;
 };
-}  // namespace Common::Log

@@ -1,5 +1,6 @@
 // Copyright 2015 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -7,16 +8,22 @@
 
 namespace Null
 {
-class VideoBackend final : public VideoBackendBase
+class VideoBackend : public VideoBackendBase
 {
-public:
-  bool Initialize(const WindowSystemInfo& wsi) override;
+  bool Initialize(void* window_handle) override;
+  bool InitializeOtherThread(void*, std::thread*) override;
   void Shutdown() override;
+  void ShutdownOtherThread() override;
 
-  std::string GetName() const override { return NAME; }
-  std::string GetDisplayName() const override;
-  void InitBackendInfo(const WindowSystemInfo& wsi) override;
+  std::string GetName() const override { return "Null"; }
+  std::string GetDisplayName() const override { return "Null"; }
+  void Video_Prepare() override;
+  void Video_PrepareOtherThread() override;
+  void Video_Cleanup() override;
+  void Video_CleanupOtherThread() override;
 
-  static constexpr const char* NAME = "Null";
+  void InitBackendInfo() override;
+
+  unsigned int PeekMessages() override { return 0; }
 };
-}  // namespace Null
+}

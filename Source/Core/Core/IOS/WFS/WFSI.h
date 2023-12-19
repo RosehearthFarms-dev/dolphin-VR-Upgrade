@@ -1,20 +1,23 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <functional>
-#include <memory>
 #include <string>
 #include <vector>
 
+#include <mbedtls/aes.h>
+
 #include "Common/CommonTypes.h"
-#include "Common/Crypto/AES.h"
 #include "Core/IOS/Device.h"
 #include "Core/IOS/ES/Formats.h"
 #include "Core/IOS/IOS.h"
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
 {
 class ARCUnpacker
 {
@@ -31,38 +34,40 @@ private:
   std::vector<u8> m_whole_file;
 };
 
-class WFSIDevice : public EmulationDevice
+namespace Device
+{
+class WFSI : public Device
 {
 public:
-  WFSIDevice(EmulationKernel& ios, const std::string& device_name);
+  WFSI(Kernel& ios, const std::string& device_name);
 
-  std::optional<IPCReply> IOCtl(const IOCtlRequest& request) override;
+  IPCCommandResult IOCtl(const IOCtlRequest& request) override;
 
 private:
   u32 GetTmd(u16 group_id, u32 title_id, u64 subtitle_id, u32 address, u32* size) const;
 
   void SetCurrentTitleIdAndGroupId(u64 tid, u16 gid);
   void SetImportTitleIdAndGroupId(u64 tid, u16 gid);
-  void FinalizePatchInstall();
 
   s32 CancelTitleImport(bool continue_install);
   s32 CancelPatchImport(bool continue_install);
 
   std::string m_device_name;
 
-  std::unique_ptr<Common::AES::Context> m_aes_ctx{};
+  mbedtls_aes_context m_aes_ctx;
+  u8 m_aes_key[0x10] = {};
   u8 m_aes_iv[0x10] = {};
 
-  ES::TMDReader m_tmd;
+  IOS::ES::TMDReader m_tmd;
   std::string m_base_extract_path;
 
-  u64 m_current_title_id = 0;
+  u64 m_current_title_id;
   std::string m_current_title_id_str;
-  u16 m_current_group_id = 0;
+  u16 m_current_group_id;
   std::string m_current_group_id_str;
-  u64 m_import_title_id = 0;
+  u64 m_import_title_id;
   std::string m_import_title_id_str;
-  u16 m_import_group_id = 0;
+  u16 m_import_group_id;
   std::string m_import_group_id_str;
 
   // Set on IMPORT_TITLE_INIT when the next profile application should not delete
@@ -92,7 +97,6 @@ private:
     IOCTL_WFSI_FINALIZE_TITLE_INSTALL = 0x06,
 
     IOCTL_WFSI_DELETE_TITLE = 0x17,
-    IOCTL_WFSI_CHANGE_TITLE = 0x18,
 
     IOCTL_WFSI_GET_VERSION = 0x1b,
 
@@ -121,4 +125,6 @@ private:
     IOCTL_WFSI_CHECK_HAS_SPACE = 0x95,
   };
 };
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

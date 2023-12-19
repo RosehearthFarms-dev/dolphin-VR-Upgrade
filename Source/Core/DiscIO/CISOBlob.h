@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -8,7 +9,7 @@
 #include <string>
 
 #include "Common/CommonTypes.h"
-#include "Common/IOFile.h"
+#include "Common/File.h"
 #include "DiscIO/Blob.h"
 
 namespace DiscIO
@@ -36,17 +37,11 @@ public:
   static std::unique_ptr<CISOFileReader> Create(File::IOFile file);
 
   BlobType GetBlobType() const override { return BlobType::CISO; }
-  std::unique_ptr<BlobReader> CopyReader() const override;
+  // The CISO format does not save the original file size.
+  // This function returns an upper bound.
+  u64 GetDataSize() const override;
 
   u64 GetRawSize() const override;
-  u64 GetDataSize() const override;
-  DataSizeType GetDataSizeType() const override { return DataSizeType::UpperBound; }
-
-  u64 GetBlockSize() const override { return m_block_size; }
-  bool HasFastRandomAccessInBlock() const override { return true; }
-  std::string GetCompressionMethod() const override { return {}; }
-  std::optional<int> GetCompressionLevel() const override { return std::nullopt; }
-
   bool Read(u64 offset, u64 nbytes, u8* out_ptr) override;
 
 private:
@@ -61,4 +56,4 @@ private:
   MapType m_ciso_map[CISO_MAP_SIZE];
 };
 
-}  // namespace DiscIO
+}  // namespace

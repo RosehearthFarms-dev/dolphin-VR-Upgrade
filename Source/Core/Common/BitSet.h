@@ -1,15 +1,94 @@
-// SPDX-License-Identifier: CC0-1.0
+// This file is under the public domain.
 
 #pragma once
 
-#include <bit>
 #include <cstddef>
 #include <initializer_list>
 #include <type_traits>
+#include "CommonTypes.h"
 
-#include "Common/CommonTypes.h"
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+#define constexpr inline
+#endif
 
-namespace Common
+// Helper functions:
+
+#ifdef _WIN32
+
+#include <intrin.h>
+
+template <typename T>
+constexpr int CountSetBits(T v)
+{
+  // from https://graphics.stanford.edu/~seander/bithacks.html
+  // GCC has this built in, but MSVC's intrinsic will only emit the actual
+  // POPCNT instruction, which we're not depending on
+  v = v - ((v >> 1) & (T) ~(T)0 / 3);
+  v = (v & (T) ~(T)0 / 15 * 3) + ((v >> 2) & (T) ~(T)0 / 15 * 3);
+  v = (v + (v >> 4)) & (T) ~(T)0 / 255 * 15;
+  return (T)(v * ((T) ~(T)0 / 255)) >> (sizeof(T) - 1) * 8;
+}
+inline int LeastSignificantSetBit(u8 val)
+{
+  unsigned long index;
+  _BitScanForward(&index, val);
+  return (int)index;
+}
+inline int LeastSignificantSetBit(u16 val)
+{
+  unsigned long index;
+  _BitScanForward(&index, val);
+  return (int)index;
+}
+inline int LeastSignificantSetBit(u32 val)
+{
+  unsigned long index;
+  _BitScanForward(&index, val);
+  return (int)index;
+}
+inline int LeastSignificantSetBit(u64 val)
+{
+  unsigned long index;
+  _BitScanForward64(&index, val);
+  return (int)index;
+}
+#else
+constexpr int CountSetBits(u8 val)
+{
+  return __builtin_popcount(val);
+}
+constexpr int CountSetBits(u16 val)
+{
+  return __builtin_popcount(val);
+}
+constexpr int CountSetBits(u32 val)
+{
+  return __builtin_popcount(val);
+}
+constexpr int CountSetBits(u64 val)
+{
+  return __builtin_popcountll(val);
+}
+inline int LeastSignificantSetBit(u8 val)
+{
+  return __builtin_ctz(val);
+}
+inline int LeastSignificantSetBit(u16 val)
+{
+  return __builtin_ctz(val);
+}
+inline int LeastSignificantSetBit(u32 val)
+{
+  return __builtin_ctz(val);
+}
+inline int LeastSignificantSetBit(u64 val)
+{
+  return __builtin_ctzll(val);
+}
+#endif
+
+// namespace avoids conflict with OS X Carbon; don't use BitSet<T> directly
+namespace BS
 {
 // Similar to std::bitset, this is a class which encapsulates a bitset, i.e.
 // using the set bits of an integer to represent a set of integers.  Like that
@@ -28,6 +107,8 @@ namespace Common
 //   (This uses the appropriate CPU instruction to find the next set bit in one
 //   operation.)
 // - Counting set bits using .Count() - see comment on that method.
+
+// TODO: use constexpr when MSVC gets out of the Dark Ages
 
 template <typename IntTy>
 class BitSet
@@ -72,7 +153,7 @@ public:
       }
       else
       {
-        int bit = std::countr_zero(m_val);
+        int bit = LeastSignificantSetBit(m_val);
         m_val &= ~(1 << bit);
         m_bit = bit;
       }
@@ -87,16 +168,16 @@ public:
     constexpr int operator*() const { return m_bit; }
     constexpr bool operator==(Iterator other) const { return m_bit == other.m_bit; }
     constexpr bool operator!=(Iterator other) const { return m_bit != other.m_bit; }
-
   private:
     IntTy m_val;
     int m_bit;
   };
 
-  constexpr BitSet() = default;
+  constexpr BitSet() : m_val(0) {}
   constexpr explicit BitSet(IntTy val) : m_val(val) {}
-  constexpr BitSet(std::initializer_list<int> init)
+  BitSet(std::initializer_list<int> init)
   {
+    m_val = 0;
     for (int bit : init)
       m_val |= (IntTy)1 << bit;
   }
@@ -116,26 +197,26 @@ public:
   constexpr BitSet operator&(BitSet other) const { return BitSet(m_val & other.m_val); }
   constexpr BitSet operator^(BitSet other) const { return BitSet(m_val ^ other.m_val); }
   constexpr BitSet operator~() const { return BitSet(~m_val); }
-  constexpr BitSet operator<<(IntTy shift) const { return BitSet(m_val << shift); }
-  constexpr BitSet operator>>(IntTy shift) const { return BitSet(m_val >> shift); }
   constexpr explicit operator bool() const { return m_val != 0; }
   BitSet& operator|=(BitSet other) { return *this = *this | other; }
   BitSet& operator&=(BitSet other) { return *this = *this & other; }
   BitSet& operator^=(BitSet other) { return *this = *this ^ other; }
-  BitSet& operator<<=(IntTy shift) { return *this = *this << shift; }
-  BitSet& operator>>=(IntTy shift) { return *this = *this >> shift; }
   // Warning: Even though on modern CPUs this is a single fast instruction,
   // Dolphin's official builds do not currently assume POPCNT support on x86,
   // so slower explicit bit twiddling is generated.  Still should generally
   // be faster than a loop.
-  constexpr unsigned int Count() const { return std::popcount(m_val); }
+  constexpr unsigned int Count() const { return CountSetBits(m_val); }
   constexpr Iterator begin() const { return ++Iterator(m_val, 0); }
   constexpr Iterator end() const { return Iterator(m_val, -1); }
-  IntTy m_val{};
+  IntTy m_val;
 };
-}  // namespace Common
+}
 
-using BitSet8 = Common::BitSet<u8>;
-using BitSet16 = Common::BitSet<u16>;
-using BitSet32 = Common::BitSet<u32>;
-using BitSet64 = Common::BitSet<u64>;
+typedef BS::BitSet<u8> BitSet8;
+typedef BS::BitSet<u16> BitSet16;
+typedef BS::BitSet<u32> BitSet32;
+typedef BS::BitSet<u64> BitSet64;
+
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+#undef constexpr
+#endif

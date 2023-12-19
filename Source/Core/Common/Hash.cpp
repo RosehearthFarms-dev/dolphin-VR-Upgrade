@@ -1,51 +1,106 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Common/Hash.h"
-
 #include <algorithm>
-#include <bit>
 #include <cstring>
-
-#include <zlib.h>
-
-#include "Common/BitUtils.h"
 #include "Common/CPUDetect.h"
 #include "Common/CommonFuncs.h"
 #include "Common/Intrinsics.h"
 
 #ifdef _M_ARM_64
-#ifdef _MSC_VER
-#include <intrin.h>
-#else
 #include <arm_acle.h>
 #endif
-#endif
 
-namespace Common
+static u64 (*ptrHashFunction)(const u8* src, u32 len, u32 samples) = nullptr;
+
+// uint32_t
+// WARNING - may read one more byte!
+// Implementation from Wikipedia.
+u32 HashFletcher(const u8* data_u8, size_t length)
 {
+  const u16* data = (const u16*)data_u8; /* Pointer to the data to be summed */
+  size_t len = (length + 1) / 2;         /* Length in 16-bit words */
+  u32 sum1 = 0xffff, sum2 = 0xffff;
+
+  while (len)
+  {
+    size_t tlen = len > 360 ? 360 : len;
+    len -= tlen;
+
+    do
+    {
+      sum1 += *data++;
+      sum2 += sum1;
+    } while (--tlen);
+
+    sum1 = (sum1 & 0xffff) + (sum1 >> 16);
+    sum2 = (sum2 & 0xffff) + (sum2 >> 16);
+  }
+
+  // Second reduction step to reduce sums to 16 bits
+  sum1 = (sum1 & 0xffff) + (sum1 >> 16);
+  sum2 = (sum2 & 0xffff) + (sum2 >> 16);
+  return (sum2 << 16 | sum1);
+}
+
+// Implementation from Wikipedia
+// Slightly slower than Fletcher above, but slightly more reliable.
+// data: Pointer to the data to be summed; len is in bytes
 u32 HashAdler32(const u8* data, size_t len)
 {
-  // Use fast implementation from zlib-ng
-  return adler32_z(1, data, len);
+  static const u32 MOD_ADLER = 65521;
+  u32 a = 1, b = 0;
+
+  while (len)
+  {
+    size_t tlen = len > 5550 ? 5550 : len;
+    len -= tlen;
+
+    do
+    {
+      a += *data++;
+      b += a;
+    } while (--tlen);
+
+    a = (a & 0xffff) + (a >> 16) * (65536 - MOD_ADLER);
+    b = (b & 0xffff) + (b >> 16) * (65536 - MOD_ADLER);
+  }
+
+  // It can be shown that a <= 0x1013a here, so a single subtract will do.
+  if (a >= MOD_ADLER)
+  {
+    a -= MOD_ADLER;
+  }
+
+  // It can be shown that b can reach 0xfff87 here.
+  b = (b & 0xffff) + (b >> 16) * (65536 - MOD_ADLER);
+
+  if (b >= MOD_ADLER)
+  {
+    b -= MOD_ADLER;
+  }
+
+  return ((b << 16) | a);
 }
 
 // Stupid hash - but can't go back now :)
 // Don't use for new things. At least it's reasonably fast.
-u32 HashEctor(const u8* data, size_t len)
+u32 HashEctor(const u8* ptr, int length)
 {
   u32 crc = 0;
 
-  for (size_t i = 0; i < len; i++)
+  for (int i = 0; i < length; i++)
   {
-    crc ^= data[i];
+    crc ^= ptr[i];
     crc = (crc << 3) | (crc >> 29);
   }
 
-  return crc;
+  return (crc);
 }
 
-#ifdef _ARCH_64
+#if _ARCH_64
 
 //-----------------------------------------------------------------------------
 // Block read - if your platform needs to do endian-swapping or can only
@@ -62,15 +117,15 @@ static u64 getblock(const u64* p, int i)
 static void bmix64(u64& h1, u64& h2, u64& k1, u64& k2, u64& c1, u64& c2)
 {
   k1 *= c1;
-  k1 = std::rotl(k1, 23);
+  k1 = _rotl64(k1, 23);
   k1 *= c2;
   h1 ^= k1;
   h1 += h2;
 
-  h2 = std::rotl(h2, 41);
+  h2 = _rotl64(h2, 41);
 
   k2 *= c2;
-  k2 = std::rotl(k2, 23);
+  k2 = _rotl64(k2, 23);
   k2 *= c1;
   h2 ^= k2;
   h2 += h1;
@@ -186,7 +241,190 @@ static u64 GetMurmurHash3(const u8* src, u32 len, u32 samples)
   return h1;
 }
 
+// CRC32 hash using the SSE4.2 instruction
+#if defined(_M_X86_64)
+
+FUNCTION_TARGET_SSE42
+static u64 GetCRC32(const u8* src, u32 len, u32 samples)
+{
+  u64 h[4] = {len, 0, 0, 0};
+  u32 Step = (len / 8);
+  const u64* data = (const u64*)src;
+  const u64* end = data + Step;
+  if (samples == 0)
+    samples = std::max(Step, 1u);
+  Step = Step / samples;
+  if (Step < 1)
+    Step = 1;
+
+  while (data < end - Step * 3)
+  {
+    h[0] = _mm_crc32_u64(h[0], data[Step * 0]);
+    h[1] = _mm_crc32_u64(h[1], data[Step * 1]);
+    h[2] = _mm_crc32_u64(h[2], data[Step * 2]);
+    h[3] = _mm_crc32_u64(h[3], data[Step * 3]);
+    data += Step * 4;
+  }
+  if (data < end - Step * 0)
+    h[0] = _mm_crc32_u64(h[0], data[Step * 0]);
+  if (data < end - Step * 1)
+    h[1] = _mm_crc32_u64(h[1], data[Step * 1]);
+  if (data < end - Step * 2)
+    h[2] = _mm_crc32_u64(h[2], data[Step * 2]);
+
+  if (len & 7)
+  {
+    u64 temp = 0;
+    memcpy(&temp, end, len & 7);
+    h[0] = _mm_crc32_u64(h[0], temp);
+  }
+
+  // FIXME: is there a better way to combine these partial hashes?
+  return h[0] + (h[1] << 10) + (h[2] << 21) + (h[3] << 32);
+}
+
+#elif defined(_M_ARM_64)
+
+static u64 GetCRC32(const u8* src, u32 len, u32 samples)
+{
+  u64 h[4] = {len, 0, 0, 0};
+  u32 Step = (len / 8);
+  const u64* data = (const u64*)src;
+  const u64* end = data + Step;
+  if (samples == 0)
+    samples = std::max(Step, 1u);
+  Step = Step / samples;
+  if (Step < 1)
+    Step = 1;
+
+  while (data < end - Step * 3)
+  {
+    h[0] = __crc32d(h[0], data[Step * 0]);
+    h[1] = __crc32d(h[1], data[Step * 1]);
+    h[2] = __crc32d(h[2], data[Step * 2]);
+    h[3] = __crc32d(h[3], data[Step * 3]);
+    data += Step * 4;
+  }
+  if (data < end - Step * 0)
+    h[0] = __crc32d(h[0], data[Step * 0]);
+  if (data < end - Step * 1)
+    h[1] = __crc32d(h[1], data[Step * 1]);
+  if (data < end - Step * 2)
+    h[2] = __crc32d(h[2], data[Step * 2]);
+
+  if (len & 7)
+  {
+    u64 temp = 0;
+    memcpy(&temp, end, len & 7);
+    h[0] = __crc32d(h[0], temp);
+  }
+
+  // FIXME: is there a better way to combine these partial hashes?
+  return h[0] + (h[1] << 10) + (h[2] << 21) + (h[3] << 32);
+}
+
 #else
+
+static u64 GetCRC32(const u8* src, u32 len, u32 samples)
+{
+  return 0;
+}
+
+#endif
+
+/*
+ * NOTE: This hash function is used for custom texture loading/dumping, so
+ * it should not be changed, which would require all custom textures to be
+ * recalculated for their new hash values. If the hashing function is
+ * changed, make sure this one is still used when the legacy parameter is
+ * true.
+ */
+u64 GetHashHiresTexture(const u8* src, u32 len, u32 samples)
+{
+  const u64 m = 0xc6a4a7935bd1e995;
+  u64 h = len * m;
+  const int r = 47;
+  u32 Step = (len / 8);
+  const u64* data = (const u64*)src;
+  const u64* end = data + Step;
+  if (samples == 0)
+    samples = std::max(Step, 1u);
+  Step = Step / samples;
+  if (Step < 1)
+    Step = 1;
+  while (data < end)
+  {
+    u64 k = data[0];
+    data += Step;
+    k *= m;
+    k ^= k >> r;
+    k *= m;
+    h ^= k;
+    h *= m;
+  }
+
+  const u8* data2 = (const u8*)end;
+
+  switch (len & 7)
+  {
+  case 7:
+    h ^= u64(data2[6]) << 48;
+  case 6:
+    h ^= u64(data2[5]) << 40;
+  case 5:
+    h ^= u64(data2[4]) << 32;
+  case 4:
+    h ^= u64(data2[3]) << 24;
+  case 3:
+    h ^= u64(data2[2]) << 16;
+  case 2:
+    h ^= u64(data2[1]) << 8;
+  case 1:
+    h ^= u64(data2[0]);
+    h *= m;
+  };
+
+  h ^= h >> r;
+  h *= m;
+  h ^= h >> r;
+
+  return h;
+}
+#else
+
+// CRC32 hash using the SSE4.2 instruction
+#if defined(_M_X86)
+
+FUNCTION_TARGET_SSE42
+static u64 GetCRC32(const u8* src, u32 len, u32 samples)
+{
+  u32 h = len;
+  u32 Step = (len / 4);
+  const u32* data = (const u32*)src;
+  const u32* end = data + Step;
+  if (samples == 0)
+    samples = std::max(Step, 1u);
+  Step = Step / samples;
+  if (Step < 1)
+    Step = 1;
+  while (data < end)
+  {
+    h = _mm_crc32_u32(h, data[0]);
+    data += Step;
+  }
+
+  const u8* data2 = (const u8*)end;
+  return (u64)_mm_crc32_u32(h, u32(data2[0]));
+}
+
+#else
+
+static u64 GetCRC32(const u8* src, u32 len, u32 samples)
+{
+  return 0;
+}
+
+#endif
 
 //-----------------------------------------------------------------------------
 // Block read - if your platform needs to do endian-swapping or can only
@@ -216,15 +454,15 @@ static u32 fmix32(u32 h)
 static void bmix32(u32& h1, u32& h2, u32& k1, u32& k2, u32& c1, u32& c2)
 {
   k1 *= c1;
-  k1 = std::rotl(k1, 11);
+  k1 = _rotl(k1, 11);
   k1 *= c2;
   h1 ^= k1;
   h1 += h2;
 
-  h2 = std::rotl(h2, 17);
+  h2 = _rotl(h2, 17);
 
   k2 *= c2;
-  k2 = std::rotl(k2, 11);
+  k2 = _rotl(k2, 11);
   k2 *= c1;
   h2 ^= k2;
   h2 += h1;
@@ -316,14 +554,16 @@ static u64 GetMurmurHash3(const u8* src, u32 len, u32 samples)
   return *((u64*)&out);
 }
 
-#endif
-
-#if defined(_M_X86_64)
-
-FUNCTION_TARGET_SSE42
-static u64 GetHash64_SSE42_CRC32(const u8* src, u32 len, u32 samples)
+/*
+ * FIXME: The old 32-bit version of this hash made different hashes than the
+ * 64-bit version. Until someone can make a new version of the 32-bit one that
+ * makes identical hashes, this is just a c/p of the 64-bit one.
+ */
+u64 GetHashHiresTexture(const u8* src, u32 len, u32 samples)
 {
-  u64 h[4] = {len, 0, 0, 0};
+  const u64 m = 0xc6a4a7935bd1e995ULL;
+  u64 h = len * m;
+  const int r = 47;
   u32 Step = (len / 8);
   const u64* data = (const u64*)src;
   const u64* end = data + Step;
@@ -332,118 +572,68 @@ static u64 GetHash64_SSE42_CRC32(const u8* src, u32 len, u32 samples)
   Step = Step / samples;
   if (Step < 1)
     Step = 1;
-
-  while (data < end - Step * 3)
+  while (data < end)
   {
-    h[0] = _mm_crc32_u64(h[0], data[Step * 0]);
-    h[1] = _mm_crc32_u64(h[1], data[Step * 1]);
-    h[2] = _mm_crc32_u64(h[2], data[Step * 2]);
-    h[3] = _mm_crc32_u64(h[3], data[Step * 3]);
-    data += Step * 4;
-  }
-  if (data < end - Step * 0)
-    h[0] = _mm_crc32_u64(h[0], data[Step * 0]);
-  if (data < end - Step * 1)
-    h[1] = _mm_crc32_u64(h[1], data[Step * 1]);
-  if (data < end - Step * 2)
-    h[2] = _mm_crc32_u64(h[2], data[Step * 2]);
-
-  if (len & 7)
-  {
-    u64 temp = 0;
-    memcpy(&temp, end, len & 7);
-    h[0] = _mm_crc32_u64(h[0], temp);
+    u64 k = data[0];
+    data += Step;
+    k *= m;
+    k ^= k >> r;
+    k *= m;
+    h ^= k;
+    h *= m;
   }
 
-  // FIXME: is there a better way to combine these partial hashes?
-  return h[0] + (h[1] << 10) + (h[2] << 21) + (h[3] << 32);
+  const u8* data2 = (const u8*)end;
+
+  switch (len & 7)
+  {
+  case 7:
+    h ^= u64(data2[6]) << 48;
+  case 6:
+    h ^= u64(data2[5]) << 40;
+  case 5:
+    h ^= u64(data2[4]) << 32;
+  case 4:
+    h ^= u64(data2[3]) << 24;
+  case 3:
+    h ^= u64(data2[2]) << 16;
+  case 2:
+    h ^= u64(data2[1]) << 8;
+  case 1:
+    h ^= u64(data2[0]);
+    h *= m;
+  };
+
+  h ^= h >> r;
+  h *= m;
+  h ^= h >> r;
+
+  return h;
 }
-
-#elif defined(_M_ARM_64)
-
-static u64 GetHash64_ARMv8_CRC32(const u8* src, u32 len, u32 samples)
-{
-  u64 h[4] = {len, 0, 0, 0};
-  u32 Step = (len / 8);
-  const u64* data = (const u64*)src;
-  const u64* end = data + Step;
-  if (samples == 0)
-    samples = std::max(Step, 1u);
-  Step = Step / samples;
-  if (Step < 1)
-    Step = 1;
-
-  while (data < end - Step * 3)
-  {
-    h[0] = __crc32d(h[0], data[Step * 0]);
-    h[1] = __crc32d(h[1], data[Step * 1]);
-    h[2] = __crc32d(h[2], data[Step * 2]);
-    h[3] = __crc32d(h[3], data[Step * 3]);
-    data += Step * 4;
-  }
-  if (data < end - Step * 0)
-    h[0] = __crc32d(h[0], data[Step * 0]);
-  if (data < end - Step * 1)
-    h[1] = __crc32d(h[1], data[Step * 1]);
-  if (data < end - Step * 2)
-    h[2] = __crc32d(h[2], data[Step * 2]);
-
-  if (len & 7)
-  {
-    u64 temp = 0;
-    memcpy(&temp, end, len & 7);
-    h[0] = __crc32d(h[0], temp);
-  }
-
-  // FIXME: is there a better way to combine these partial hashes?
-  return h[0] + (h[1] << 10) + (h[2] << 21) + (h[3] << 32);
-}
-
 #endif
-
-using TextureHashFunction = u64 (*)(const u8* src, u32 len, u32 samples);
-static u64 SetHash64Function(const u8* src, u32 len, u32 samples);
-static TextureHashFunction s_texture_hash_func = SetHash64Function;
-
-static u64 SetHash64Function(const u8* src, u32 len, u32 samples)
-{
-  if (cpu_info.bCRC32)
-  {
-#if defined(_M_X86_64)
-    s_texture_hash_func = &GetHash64_SSE42_CRC32;
-#elif defined(_M_ARM_64)
-    s_texture_hash_func = &GetHash64_ARMv8_CRC32;
-#endif
-  }
-  else
-  {
-    s_texture_hash_func = &GetMurmurHash3;
-  }
-  return s_texture_hash_func(src, len, samples);
-}
 
 u64 GetHash64(const u8* src, u32 len, u32 samples)
 {
-  return s_texture_hash_func(src, len, samples);
+  return ptrHashFunction(src, len, samples);
 }
 
-u32 StartCRC32()
+// sets the hash function used for the texture cache
+void SetHash64Function()
 {
-  return crc32_z(0L, Z_NULL, 0);
+#if defined(_M_X86_64) || defined(_M_X86)
+  if (cpu_info.bSSE4_2)  // sse crc32 version
+  {
+    ptrHashFunction = &GetCRC32;
+  }
+  else
+#elif defined(_M_ARM_64)
+  if (cpu_info.bCRC32)
+  {
+    ptrHashFunction = &GetCRC32;
+  }
+  else
+#endif
+  {
+    ptrHashFunction = &GetMurmurHash3;
+  }
 }
-
-u32 UpdateCRC32(u32 crc, const u8* data, size_t len)
-{
-  return crc32_z(crc, data, len);
-}
-
-u32 ComputeCRC32(const u8* data, size_t len)
-{
-  return UpdateCRC32(StartCRC32(), data, len);
-}
-
-u32 ComputeCRC32(std::string_view data)
-{
-  return ComputeCRC32(reinterpret_cast<const u8*>(data.data()), data.size());
-}
-}  // namespace Common

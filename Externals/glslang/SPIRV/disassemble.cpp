@@ -1,11 +1,11 @@
 //
-// Copyright (C) 2014-2015 LunarG, Inc.
+//Copyright (C) 2014-2015 LunarG, Inc.
 //
-// All rights reserved.
+//All rights reserved.
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions
-// are met:
+//Redistribution and use in source and binary forms, with or without
+//modification, are permitted provided that the following conditions
+//are met:
 //
 //    Redistributions of source code must retain the above copyright
 //    notice, this list of conditions and the following disclaimer.
@@ -19,49 +19,41 @@
 //    contributors may be used to endorse or promote products derived
 //    from this software without specific prior written permission.
 //
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-// COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-// BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-// LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-// ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+//THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+//"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+//LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+//FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+//COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+//INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+//BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+//LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+//CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+//LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+//ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+//POSSIBILITY OF SUCH DAMAGE.
 
 //
 // Disassembler for SPIR-V.
 //
 
-#include <cstdlib>
-#include <cstring>
-#include <cassert>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 #include <iomanip>
 #include <stack>
 #include <sstream>
 #include <cstring>
-#include <utility>
+
+namespace spv {
+    // Include C-based headers that don't have a namespace
+    #include "GLSL.std.450.h"
+}
+const char* GlslStd450DebugNames[spv::GLSLstd450Count];
 
 #include "disassemble.h"
 #include "doc.h"
 
 namespace spv {
-    extern "C" {
-        // Include C-based headers that don't have a namespace
-        #include "GLSL.std.450.h"
-        #include "GLSL.ext.AMD.h"
-        #include "GLSL.ext.NV.h"
-    }
-}
-const char* GlslStd450DebugNames[spv::GLSLstd450Count];
-
-namespace spv {
-
-static const char* GLSLextAMDGetDebugNames(const char*, unsigned);
-static const char* GLSLextNVGetDebugNames(const char*, unsigned);
 
 static void Kill(std::ostream& out, const char* message)
 {
@@ -72,10 +64,7 @@ static void Kill(std::ostream& out, const char* message)
 // used to identify the extended instruction library imported when printing
 enum ExtInstSet {
     GLSL450Inst,
-    GLSLextAMDInst,
-    GLSLextNVInst,
     OpenCLExtInst,
-    NonSemanticDebugPrintfExtInst,
 };
 
 // Container class for a single instance of a SPIR-V stream, with methods for disassembly.
@@ -101,7 +90,6 @@ protected:
     void outputMask(OperandClass operandClass, unsigned mask);
     void disassembleImmediates(int numOperands);
     void disassembleIds(int numOperands);
-    std::pair<int, std::string> decodeString();
     int disassembleString();
     void disassembleInstruction(Id resultId, Id typeId, Op opCode, int numOperands);
 
@@ -217,12 +205,10 @@ void SpirvStream::outputIndent()
 
 void SpirvStream::formatId(Id id, std::stringstream& idStream)
 {
-    if (id != 0) {
-        // On instructions with no IDs, this is called with "0", which does not
-        // have to be within ID bounds on null shaders.
-        if (id >= bound)
-            Kill(out, "Bad <id>");
+    if (id >= bound)
+        Kill(out, "Bad <id>");
 
+    if (id != 0) {
         idStream << id;
         if (idDescriptor[id].size() > 0)
             idStream << "(" << idDescriptor[id] << ")";
@@ -292,44 +278,31 @@ void SpirvStream::disassembleIds(int numOperands)
     }
 }
 
-// decode string from words at current position (non-consuming)
-std::pair<int, std::string> SpirvStream::decodeString()
-{
-    std::string res;
-    int wordPos = word;
-    char c;
-    bool done = false;
-
-    do {
-        unsigned int content = stream[wordPos];
-        for (int charCount = 0; charCount < 4; ++charCount) {
-            c = content & 0xff;
-            content >>= 8;
-            if (c == '\0') {
-                done = true;
-                break;
-            }
-            res += c;
-        }
-        ++wordPos;
-    } while(! done);
-
-    return std::make_pair(wordPos - word, res);
-}
-
 // return the number of operands consumed by the string
 int SpirvStream::disassembleString()
 {
+    int startWord = word;
+
     out << " \"";
 
-    std::pair<int, std::string> decoderes = decodeString();
+    const char* wordString;
+    bool done = false;
+    do {
+        unsigned int content = stream[word];
+        wordString = (const char*)&content;
+        for (int charCount = 0; charCount < 4; ++charCount) {
+            if (*wordString == 0) {
+                done = true;
+                break;
+            }
+            out << *(wordString++);
+        }
+        ++word;
+    } while (! done);
 
-    out << decoderes.second;
     out << "\"";
 
-    word += decoderes.first;
-
-    return decoderes.first;
+    return word - startWord;
 }
 
 void SpirvStream::disassembleInstruction(Id resultId, Id /*typeId*/, Op opCode, int numOperands)
@@ -346,27 +319,16 @@ void SpirvStream::disassembleInstruction(Id resultId, Id /*typeId*/, Op opCode, 
             nextNestedControl = 0;
         }
     } else if (opCode == OpExtInstImport) {
-        idDescriptor[resultId] = decodeString().second;
+        idDescriptor[resultId] = (const char*)(&stream[word]);
     }
     else {
-        if (resultId != 0 && idDescriptor[resultId].size() == 0) {
+        if (idDescriptor[resultId].size() == 0) {
             switch (opCode) {
             case OpTypeInt:
-                switch (stream[word]) {
-                case 8:  idDescriptor[resultId] = "int8_t"; break;
-                case 16: idDescriptor[resultId] = "int16_t"; break;
-                default: assert(0); // fallthrough
-                case 32: idDescriptor[resultId] = "int"; break;
-                case 64: idDescriptor[resultId] = "int64_t"; break;
-                }
+                idDescriptor[resultId] = "int";
                 break;
             case OpTypeFloat:
-                switch (stream[word]) {
-                case 16: idDescriptor[resultId] = "float16_t"; break;
-                default: assert(0); // fallthrough
-                case 32: idDescriptor[resultId] = "float"; break;
-                case 64: idDescriptor[resultId] = "float64_t"; break;
-                }
+                idDescriptor[resultId] = "float";
                 break;
             case OpTypeBool:
                 idDescriptor[resultId] = "bool";
@@ -378,18 +340,8 @@ void SpirvStream::disassembleInstruction(Id resultId, Id /*typeId*/, Op opCode, 
                 idDescriptor[resultId] = "ptr";
                 break;
             case OpTypeVector:
-                if (idDescriptor[stream[word]].size() > 0) {
+                if (idDescriptor[stream[word]].size() > 0)
                     idDescriptor[resultId].append(idDescriptor[stream[word]].begin(), idDescriptor[stream[word]].begin() + 1);
-                    if (strstr(idDescriptor[stream[word]].c_str(), "8")) {
-                        idDescriptor[resultId].append("8");
-                    }
-                    if (strstr(idDescriptor[stream[word]].c_str(), "16")) {
-                        idDescriptor[resultId].append("16");
-                    }
-                    if (strstr(idDescriptor[stream[word]].c_str(), "64")) {
-                        idDescriptor[resultId].append("64");
-                    }
-                }
                 idDescriptor[resultId].append("vec");
                 switch (stream[word + 1]) {
                 case 2:   idDescriptor[resultId].append("2");   break;
@@ -443,7 +395,7 @@ void SpirvStream::disassembleInstruction(Id resultId, Id /*typeId*/, Op opCode, 
             --numOperands;
             // Get names for printing "(XXX)" for readability, *after* this id
             if (opCode == OpName)
-                idDescriptor[stream[word - 1]] = decodeString().second;
+                idDescriptor[stream[word - 1]] = (const char*)(&stream[word]);
             break;
         case OperandVariableIds:
             disassembleIds(numOperands);
@@ -494,38 +446,14 @@ void SpirvStream::disassembleInstruction(Id resultId, Id /*typeId*/, Op opCode, 
             --numOperands;
             if (opCode == OpExtInst) {
                 ExtInstSet extInstSet = GLSL450Inst;
-                const char* name = idDescriptor[stream[word - 2]].c_str();
-                if (strcmp("OpenCL.std", name) == 0) {
+                if (0 == memcmp("OpenCL", (const char*)(idDescriptor[stream[word-2]].c_str()), 6)) {
                     extInstSet = OpenCLExtInst;
-                } else if (strcmp("OpenCL.DebugInfo.100", name) == 0) {
-                    extInstSet = OpenCLExtInst;
-                } else if (strcmp("NonSemantic.DebugPrintf", name) == 0) {
-                    extInstSet = NonSemanticDebugPrintfExtInst;
-                } else if (strcmp(spv::E_SPV_AMD_shader_ballot, name) == 0 ||
-                           strcmp(spv::E_SPV_AMD_shader_trinary_minmax, name) == 0 ||
-                           strcmp(spv::E_SPV_AMD_shader_explicit_vertex_parameter, name) == 0 ||
-                           strcmp(spv::E_SPV_AMD_gcn_shader, name) == 0) {
-                    extInstSet = GLSLextAMDInst;
-                } else if (strcmp(spv::E_SPV_NV_sample_mask_override_coverage, name) == 0 ||
-                          strcmp(spv::E_SPV_NV_geometry_shader_passthrough, name) == 0 ||
-                          strcmp(spv::E_SPV_NV_viewport_array2, name) == 0 ||
-                          strcmp(spv::E_SPV_NVX_multiview_per_view_attributes, name) == 0 || 
-                          strcmp(spv::E_SPV_NV_fragment_shader_barycentric, name) == 0 ||
-                          strcmp(spv::E_SPV_NV_mesh_shader, name) == 0) {
-                    extInstSet = GLSLextNVInst;
                 }
                 unsigned entrypoint = stream[word - 1];
                 if (extInstSet == GLSL450Inst) {
                     if (entrypoint < GLSLstd450Count) {
                         out << "(" << GlslStd450DebugNames[entrypoint] << ")";
                     }
-                } else if (extInstSet == GLSLextAMDInst) {
-                    out << "(" << GLSLextAMDGetDebugNames(name, entrypoint) << ")";
-                }
-                else if (extInstSet == GLSLextNVInst) {
-                    out << "(" << GLSLextNVGetDebugNames(name, entrypoint) << ")";
-                } else if (extInstSet == NonSemanticDebugPrintfExtInst) {
-                    out << "(DebugPrintf)";
                 }
             }
             break;
@@ -533,23 +461,6 @@ void SpirvStream::disassembleInstruction(Id resultId, Id /*typeId*/, Op opCode, 
         case OperandLiteralString:
             numOperands -= disassembleString();
             break;
-        case OperandVariableLiteralStrings:
-            while (numOperands > 0)
-                numOperands -= disassembleString();
-            return;
-        case OperandMemoryAccess:
-            outputMask(OperandMemoryAccess, stream[word++]);
-            --numOperands;
-            // Aligned is the only memory access operand that uses an immediate
-            // value, and it is also the first operand that uses a value at all.
-            if (stream[word-1] & MemoryAccessAlignedMask) {
-                disassembleImmediates(1);
-                numOperands--;
-                if (numOperands)
-                    out << " ";
-            }
-            disassembleIds(numOperands);
-            return;
         default:
             assert(operandClass >= OperandSource && operandClass < OperandOpcode);
 
@@ -648,105 +559,6 @@ static void GLSLstd450GetDebugNames(const char** names)
     names[GLSLstd450InterpolateAtCentroid]   = "InterpolateAtCentroid";
     names[GLSLstd450InterpolateAtSample]     = "InterpolateAtSample";
     names[GLSLstd450InterpolateAtOffset]     = "InterpolateAtOffset";
-    names[GLSLstd450NMin]                    = "NMin";
-    names[GLSLstd450NMax]                    = "NMax";
-    names[GLSLstd450NClamp]                  = "NClamp";
-}
-
-static const char* GLSLextAMDGetDebugNames(const char* name, unsigned entrypoint)
-{
-    if (strcmp(name, spv::E_SPV_AMD_shader_ballot) == 0) {
-        switch (entrypoint) {
-        case SwizzleInvocationsAMD:         return "SwizzleInvocationsAMD";
-        case SwizzleInvocationsMaskedAMD:   return "SwizzleInvocationsMaskedAMD";
-        case WriteInvocationAMD:            return "WriteInvocationAMD";
-        case MbcntAMD:                      return "MbcntAMD";
-        default:                            return "Bad";
-        }
-    } else if (strcmp(name, spv::E_SPV_AMD_shader_trinary_minmax) == 0) {
-        switch (entrypoint) {
-        case FMin3AMD:      return "FMin3AMD";
-        case UMin3AMD:      return "UMin3AMD";
-        case SMin3AMD:      return "SMin3AMD";
-        case FMax3AMD:      return "FMax3AMD";
-        case UMax3AMD:      return "UMax3AMD";
-        case SMax3AMD:      return "SMax3AMD";
-        case FMid3AMD:      return "FMid3AMD";
-        case UMid3AMD:      return "UMid3AMD";
-        case SMid3AMD:      return "SMid3AMD";
-        default:            return "Bad";
-        }
-    } else if (strcmp(name, spv::E_SPV_AMD_shader_explicit_vertex_parameter) == 0) {
-        switch (entrypoint) {
-        case InterpolateAtVertexAMD:    return "InterpolateAtVertexAMD";
-        default:                        return "Bad";
-        }
-    }
-    else if (strcmp(name, spv::E_SPV_AMD_gcn_shader) == 0) {
-        switch (entrypoint) {
-        case CubeFaceIndexAMD:      return "CubeFaceIndexAMD";
-        case CubeFaceCoordAMD:      return "CubeFaceCoordAMD";
-        case TimeAMD:               return "TimeAMD";
-        default:
-            break;
-        }
-    }
-
-    return "Bad";
-}
-
-static const char* GLSLextNVGetDebugNames(const char* name, unsigned entrypoint)
-{
-    if (strcmp(name, spv::E_SPV_NV_sample_mask_override_coverage) == 0 ||
-        strcmp(name, spv::E_SPV_NV_geometry_shader_passthrough) == 0 ||
-        strcmp(name, spv::E_ARB_shader_viewport_layer_array) == 0 ||
-        strcmp(name, spv::E_SPV_NV_viewport_array2) == 0 ||
-        strcmp(name, spv::E_SPV_NVX_multiview_per_view_attributes) == 0 ||
-        strcmp(name, spv::E_SPV_NV_fragment_shader_barycentric) == 0 ||
-        strcmp(name, spv::E_SPV_NV_mesh_shader) == 0 ||
-        strcmp(name, spv::E_SPV_NV_shader_image_footprint) == 0) {
-        switch (entrypoint) {
-        // NV builtins
-        case BuiltInViewportMaskNV:                 return "ViewportMaskNV";
-        case BuiltInSecondaryPositionNV:            return "SecondaryPositionNV";
-        case BuiltInSecondaryViewportMaskNV:        return "SecondaryViewportMaskNV";
-        case BuiltInPositionPerViewNV:              return "PositionPerViewNV";
-        case BuiltInViewportMaskPerViewNV:          return "ViewportMaskPerViewNV";
-        case BuiltInBaryCoordNV:                    return "BaryCoordNV";
-        case BuiltInBaryCoordNoPerspNV:             return "BaryCoordNoPerspNV";
-        case BuiltInTaskCountNV:                    return "TaskCountNV";
-        case BuiltInPrimitiveCountNV:               return "PrimitiveCountNV";
-        case BuiltInPrimitiveIndicesNV:             return "PrimitiveIndicesNV";
-        case BuiltInClipDistancePerViewNV:          return "ClipDistancePerViewNV";
-        case BuiltInCullDistancePerViewNV:          return "CullDistancePerViewNV";
-        case BuiltInLayerPerViewNV:                 return "LayerPerViewNV";
-        case BuiltInMeshViewCountNV:                return "MeshViewCountNV";
-        case BuiltInMeshViewIndicesNV:              return "MeshViewIndicesNV";
-
-        // NV Capabilities
-        case CapabilityGeometryShaderPassthroughNV: return "GeometryShaderPassthroughNV";
-        case CapabilityShaderViewportMaskNV:        return "ShaderViewportMaskNV";
-        case CapabilityShaderStereoViewNV:          return "ShaderStereoViewNV";
-        case CapabilityPerViewAttributesNV:         return "PerViewAttributesNV";
-        case CapabilityFragmentBarycentricNV:       return "FragmentBarycentricNV";
-        case CapabilityMeshShadingNV:               return "MeshShadingNV";
-        case CapabilityImageFootprintNV:            return "ImageFootprintNV";
-        case CapabilitySampleMaskOverrideCoverageNV:return "SampleMaskOverrideCoverageNV";
-
-        // NV Decorations
-        case DecorationOverrideCoverageNV:          return "OverrideCoverageNV";
-        case DecorationPassthroughNV:               return "PassthroughNV";
-        case DecorationViewportRelativeNV:          return "ViewportRelativeNV";
-        case DecorationSecondaryViewportRelativeNV: return "SecondaryViewportRelativeNV";
-        case DecorationPerVertexNV:                 return "PerVertexNV";
-        case DecorationPerPrimitiveNV:              return "PerPrimitiveNV";
-        case DecorationPerViewNV:                   return "PerViewNV";
-        case DecorationPerTaskNV:                   return "PerTaskNV";
-
-        default:                                    return "Bad";
-        }
-    }
-    return "Bad";
 }
 
 void Disassemble(std::ostream& out, const std::vector<unsigned int>& stream)

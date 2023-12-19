@@ -1,5 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -8,10 +9,7 @@
 
 #include "Common/CommonTypes.h"
 
-namespace Common
-{
 class PCAP;
-}
 
 namespace DSP
 {
@@ -58,8 +56,8 @@ public:
   // Automatically creates a writeable file (truncate existing file).
   PCAPDSPCaptureLogger(const std::string& pcap_filename);
   // Takes ownership of pcap.
-  PCAPDSPCaptureLogger(Common::PCAP* pcap);
-  PCAPDSPCaptureLogger(std::unique_ptr<Common::PCAP>&& pcap);
+  PCAPDSPCaptureLogger(PCAP* pcap);
+  PCAPDSPCaptureLogger(std::unique_ptr<PCAP>&& pcap);
 
   void LogIFXRead(u16 address, u16 read_value) override { LogIFXAccess(true, address, read_value); }
   void LogIFXWrite(u16 address, u16 written_value) override
@@ -71,6 +69,6 @@ public:
 private:
   void LogIFXAccess(bool read, u16 address, u16 value);
 
-  std::unique_ptr<Common::PCAP> m_pcap;
+  std::unique_ptr<PCAP> m_pcap;
 };
 }  // namespace DSP

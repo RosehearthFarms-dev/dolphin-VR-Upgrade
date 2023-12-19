@@ -1,8 +1,10 @@
 // Copyright 2015 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/HW/DVD/DVDThread.h"
 
+#include <cinttypes>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -14,10 +16,10 @@
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
 #include "Common/Event.h"
+#include "Common/FifoQueue.h"
 #include "Common/Flag.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
-#include "Common/SPSCQueue.h"
 #include "Common/Thread.h"
 #include "Common/Timer.h"
 
@@ -29,80 +31,125 @@
 #include "Core/HW/Memmap.h"
 #include "Core/HW/SystemTimers.h"
 #include "Core/IOS/ES/Formats.h"
-#include "Core/System.h"
 
 #include "DiscIO/Enums.h"
 #include "DiscIO/Volume.h"
 
-namespace DVD
+namespace DVDThread
 {
-DVDThread::DVDThread(Core::System& system) : m_system(system)
+struct ReadRequest
 {
-}
+  bool copy_to_ram;
+  u32 output_address;
+  u64 dvd_offset;
+  u32 length;
+  DiscIO::Partition partition;
 
-DVDThread::~DVDThread() = default;
+  // This determines which code DVDInterface will run to reply
+  // to the emulated software. We can't use callbacks,
+  // because function pointers can't be stored in savestates.
+  DVDInterface::ReplyType reply_type;
 
-void DVDThread::Start()
+  // IDs are used to uniquely identify a request. They must not be
+  // identical to IDs of any other requests that currently exist, but
+  // it's fine to re-use IDs of requests that have existed in the past.
+  u64 id;
+
+  // Only used for logging
+  u64 time_started_ticks;
+  u64 realtime_started_us;
+  u64 realtime_done_us;
+};
+
+using ReadResult = std::pair<ReadRequest, std::vector<u8>>;
+
+static void StartDVDThread();
+static void StopDVDThread();
+
+static void DVDThread();
+static void WaitUntilIdle();
+
+static void StartReadInternal(bool copy_to_ram, u32 output_address, u64 dvd_offset, u32 length,
+                              const DiscIO::Partition& partition,
+                              DVDInterface::ReplyType reply_type, s64 ticks_until_completion);
+
+static void FinishRead(u64 id, s64 cycles_late);
+static CoreTiming::EventType* s_finish_read;
+
+static u64 s_next_id = 0;
+
+static std::thread s_dvd_thread;
+static Common::Event s_request_queue_expanded;    // Is set by CPU thread
+static Common::Event s_result_queue_expanded;     // Is set by DVD thread
+static Common::Flag s_dvd_thread_exiting(false);  // Is set by CPU thread
+
+static Common::FifoQueue<ReadRequest, false> s_request_queue;
+static Common::FifoQueue<ReadResult, false> s_result_queue;
+static std::map<u64, ReadResult> s_result_map;
+
+static std::unique_ptr<DiscIO::Volume> s_disc;
+
+void Start()
 {
-  m_finish_read = m_system.GetCoreTiming().RegisterEvent("FinishReadDVDThread", GlobalFinishRead);
+  s_finish_read = CoreTiming::RegisterEvent("FinishReadDVDThread", FinishRead);
 
-  m_request_queue_expanded.Reset();
-  m_result_queue_expanded.Reset();
-  m_request_queue.Clear();
-  m_result_queue.Clear();
+  s_request_queue_expanded.Reset();
+  s_result_queue_expanded.Reset();
+  s_request_queue.Clear();
+  s_result_queue.Clear();
 
   // This is reset on every launch for determinism, but it doesn't matter
   // much, because this will never get exposed to the emulated game.
-  m_next_id = 0;
+  s_next_id = 0;
 
   StartDVDThread();
 }
 
-void DVDThread::StartDVDThread()
+static void StartDVDThread()
 {
-  ASSERT(!m_dvd_thread.joinable());
-  m_dvd_thread_exiting.Clear();
-  m_dvd_thread = std::thread(&DVDThread::DVDThreadMain, this);
+  _assert_(!s_dvd_thread.joinable());
+  s_dvd_thread_exiting.Clear();
+  s_dvd_thread = std::thread(DVDThread);
 }
 
-void DVDThread::Stop()
+void Stop()
 {
   StopDVDThread();
-  m_disc.reset();
+  s_disc.reset();
 }
 
-void DVDThread::StopDVDThread()
+static void StopDVDThread()
 {
-  ASSERT(m_dvd_thread.joinable());
+  _assert_(s_dvd_thread.joinable());
 
-  // By setting dvd_thread_exiting, we ask the DVD thread to cleanly exit.
-  // In case the request queue is empty, we need to set request_queue_expanded
-  // so that the DVD thread will wake up and check dvd_thread_exiting.
-  m_dvd_thread_exiting.Set();
-  m_request_queue_expanded.Set();
+  // By setting s_DVD_thread_exiting, we ask the DVD thread to cleanly exit.
+  // In case the request queue is empty, we need to set s_request_queue_expanded
+  // so that the DVD thread will wake up and check s_DVD_thread_exiting.
+  s_dvd_thread_exiting.Set();
+  s_request_queue_expanded.Set();
 
-  m_dvd_thread.join();
+  s_dvd_thread.join();
 }
 
-void DVDThread::DoState(PointerWrap& p)
+void DoState(PointerWrap& p)
 {
   // By waiting for the DVD thread to be done working, we ensure
-  // that request_queue will be empty and that the DVD thread
+  // that s_request_queue will be empty and that the DVD thread
   // won't be touching anything while this function runs.
   WaitUntilIdle();
 
-  // Move all results from result_queue to result_map because
-  // PointerWrap::Do supports std::map but not Common::SPSCQueue.
+  // Move all results from s_result_queue to s_result_map because
+  // PointerWrap::Do supports std::map but not Common::FifoQueue.
   // This won't affect the behavior of FinishRead.
   ReadResult result;
-  while (m_result_queue.Pop(result))
-    m_result_map.emplace(result.first.id, std::move(result));
+  while (s_result_queue.Pop(result))
+    s_result_map.emplace(result.first.id, std::move(result));
 
   // Both queues are now empty, so we don't need to savestate them.
-  p.Do(m_result_map);
-  p.Do(m_next_id);
+  p.Do(s_result_map);
+  p.Do(s_next_id);
 
-  // m_disc isn't savestated (because it points to files on the
+  // s_disc isn't savestated (because it points to files on the
   // local system). Instead, we check that the status of the disc
   // is the same as when the savestate was made. This won't catch
   // cases of having the wrong disc inserted, though.
@@ -112,9 +159,9 @@ void DVDThread::DoState(PointerWrap& p)
   if (had_disc != HasDisc())
   {
     if (had_disc)
-      PanicAlertFmtT("An inserted disc was expected but not found.");
+      PanicAlertT("An inserted disc was expected but not found.");
     else
-      m_disc.reset();
+      s_disc.reset();
   }
 
   // TODO: Savestates can be smaller if the buffers of results aren't saved,
@@ -128,108 +175,83 @@ void DVDThread::DoState(PointerWrap& p)
   // was made. Handling that properly may be more effort than it's worth.
 }
 
-void DVDThread::SetDisc(std::unique_ptr<DiscIO::Volume> disc)
+void SetDisc(std::unique_ptr<DiscIO::Volume> disc)
 {
   WaitUntilIdle();
-  m_disc = std::move(disc);
+  s_disc = std::move(disc);
 }
 
-bool DVDThread::HasDisc() const
+bool HasDisc()
 {
-  return m_disc != nullptr;
+  return s_disc != nullptr;
 }
 
-bool DVDThread::HasWiiHashes() const
-{
-  // HasWiiHashes is thread-safe, so calling WaitUntilIdle isn't necessary.
-  return m_disc->HasWiiHashes();
-}
-
-DiscIO::Platform DVDThread::GetDiscType() const
+DiscIO::Platform GetDiscType()
 {
   // GetVolumeType is thread-safe, so calling WaitUntilIdle isn't necessary.
-  return m_disc->GetVolumeType();
+  return s_disc->GetVolumeType();
 }
 
-u64 DVDThread::PartitionOffsetToRawOffset(u64 offset, const DiscIO::Partition& partition)
-{
-  // PartitionOffsetToRawOffset is thread-safe, so calling WaitUntilIdle isn't necessary.
-  return m_disc->PartitionOffsetToRawOffset(offset, partition);
-}
-
-IOS::ES::TMDReader DVDThread::GetTMD(const DiscIO::Partition& partition)
+IOS::ES::TMDReader GetTMD(const DiscIO::Partition& partition)
 {
   WaitUntilIdle();
-  return m_disc->GetTMD(partition);
+  return s_disc->GetTMD(partition);
 }
 
-IOS::ES::TicketReader DVDThread::GetTicket(const DiscIO::Partition& partition)
+IOS::ES::TicketReader GetTicket(const DiscIO::Partition& partition)
 {
   WaitUntilIdle();
-  return m_disc->GetTicket(partition);
+  return s_disc->GetTicket(partition);
 }
 
-bool DVDThread::IsInsertedDiscRunning()
+bool UpdateRunningGameMetadata(const DiscIO::Partition& partition, std::optional<u64> title_id)
 {
-  if (!m_disc)
-    return false;
-
-  WaitUntilIdle();
-
-  return SConfig::GetInstance().GetGameID() == m_disc->GetGameID();
-}
-
-bool DVDThread::UpdateRunningGameMetadata(const DiscIO::Partition& partition,
-                                          std::optional<u64> title_id)
-{
-  if (!m_disc)
+  if (!s_disc)
     return false;
 
   WaitUntilIdle();
 
   if (title_id)
   {
-    const std::optional<u64> volume_title_id = m_disc->GetTitleID(partition);
+    const std::optional<u64> volume_title_id = s_disc->GetTitleID(partition);
     if (!volume_title_id || *volume_title_id != *title_id)
       return false;
   }
 
-  SConfig::GetInstance().SetRunningGameMetadata(*m_disc, partition);
+  SConfig::GetInstance().SetRunningGameMetadata(*s_disc, partition);
   return true;
 }
 
-void DVDThread::WaitUntilIdle()
+void WaitUntilIdle()
 {
-  ASSERT(Core::IsCPUThread());
+  _assert_(Core::IsCPUThread());
 
-  while (!m_request_queue.Empty())
-    m_result_queue_expanded.Wait();
+  while (!s_request_queue.Empty())
+    s_result_queue_expanded.Wait();
 
   StopDVDThread();
   StartDVDThread();
 }
 
-void DVDThread::StartRead(u64 dvd_offset, u32 length, const DiscIO::Partition& partition,
-                          DVD::ReplyType reply_type, s64 ticks_until_completion)
+void StartRead(u64 dvd_offset, u32 length, const DiscIO::Partition& partition,
+               DVDInterface::ReplyType reply_type, s64 ticks_until_completion)
 {
   StartReadInternal(false, 0, dvd_offset, length, partition, reply_type, ticks_until_completion);
 }
 
-void DVDThread::StartReadToEmulatedRAM(u32 output_address, u64 dvd_offset, u32 length,
-                                       const DiscIO::Partition& partition,
-                                       DVD::ReplyType reply_type, s64 ticks_until_completion)
+void StartReadToEmulatedRAM(u32 output_address, u64 dvd_offset, u32 length,
+                            const DiscIO::Partition& partition, DVDInterface::ReplyType reply_type,
+                            s64 ticks_until_completion)
 {
   StartReadInternal(true, output_address, dvd_offset, length, partition, reply_type,
                     ticks_until_completion);
 }
 
-void DVDThread::StartReadInternal(bool copy_to_ram, u32 output_address, u64 dvd_offset, u32 length,
-                                  const DiscIO::Partition& partition, DVD::ReplyType reply_type,
-                                  s64 ticks_until_completion)
+static void StartReadInternal(bool copy_to_ram, u32 output_address, u64 dvd_offset, u32 length,
+                              const DiscIO::Partition& partition,
+                              DVDInterface::ReplyType reply_type, s64 ticks_until_completion)
 {
-  ASSERT(Core::IsCPUThread());
-
-  auto& core_timing = m_system.GetCoreTiming();
+  _assert_(Core::IsCPUThread());
 
   ReadRequest request;
 
@@ -240,26 +262,21 @@ void DVDThread::StartReadInternal(bool copy_to_ram, u32 output_address, u64 dvd_
   request.partition = partition;
   request.reply_type = reply_type;
 
-  u64 id = m_next_id++;
+  u64 id = s_next_id++;
   request.id = id;
 
-  request.time_started_ticks = core_timing.GetTicks();
-  request.realtime_started_us = Common::Timer::NowUs();
+  request.time_started_ticks = CoreTiming::GetTicks();
+  request.realtime_started_us = Common::Timer::GetTimeUs();
 
-  m_request_queue.Push(std::move(request));
-  m_request_queue_expanded.Set();
+  s_request_queue.Push(std::move(request));
+  s_request_queue_expanded.Set();
 
-  core_timing.ScheduleEvent(ticks_until_completion, m_finish_read, id);
+  CoreTiming::ScheduleEvent(ticks_until_completion, s_finish_read, id);
 }
 
-void DVDThread::GlobalFinishRead(Core::System& system, u64 id, s64 cycles_late)
+static void FinishRead(u64 id, s64 cycles_late)
 {
-  system.GetDVDThread().FinishRead(id, cycles_late);
-}
-
-void DVDThread::FinishRead(u64 id, s64 cycles_late)
-{
-  // We can't simply pop result_queue and always get the ReadResult
+  // We can't simply pop s_result_queue and always get the ReadResult
   // we want, because the DVD thread may add ReadResults to the queue
   // in a different order than we want to get them. What we do instead
   // is to pop the queue until we find the ReadResult we want (the one
@@ -270,23 +287,23 @@ void DVDThread::FinishRead(u64 id, s64 cycles_late)
   // When this function is called again later, it will check the map for
   // the wanted ReadResult before it starts searching through the queue.
   ReadResult result;
-  auto it = m_result_map.find(id);
-  if (it != m_result_map.end())
+  auto it = s_result_map.find(id);
+  if (it != s_result_map.end())
   {
     result = std::move(it->second);
-    m_result_map.erase(it);
+    s_result_map.erase(it);
   }
   else
   {
     while (true)
     {
-      while (!m_result_queue.Pop(result))
-        m_result_queue_expanded.Wait();
+      while (!s_result_queue.Pop(result))
+        s_result_queue_expanded.Wait();
 
       if (result.first.id == id)
         break;
       else
-        m_result_map.emplace(result.first.id, std::move(result));
+        s_result_map.emplace(result.first.id, std::move(result));
     }
   }
   // We have now obtained the right ReadResult.
@@ -294,68 +311,58 @@ void DVDThread::FinishRead(u64 id, s64 cycles_late)
   const ReadRequest& request = result.first;
   const std::vector<u8>& buffer = result.second;
 
-  DEBUG_LOG_FMT(DVDINTERFACE,
-                "Disc has been read. Real time: {} us. "
-                "Real time including delay: {} us. "
-                "Emulated time including delay: {} us.",
-                request.realtime_done_us - request.realtime_started_us,
-                Common::Timer::NowUs() - request.realtime_started_us,
-                (m_system.GetCoreTiming().GetTicks() - request.time_started_ticks) /
-                    (SystemTimers::GetTicksPerSecond() / 1000000));
+  DEBUG_LOG(DVDINTERFACE, "Disc has been read. Real time: %" PRIu64 " us. "
+                          "Real time including delay: %" PRIu64 " us. "
+                          "Emulated time including delay: %" PRIu64 " us.",
+            request.realtime_done_us - request.realtime_started_us,
+            Common::Timer::GetTimeUs() - request.realtime_started_us,
+            (CoreTiming::GetTicks() - request.time_started_ticks) /
+                (SystemTimers::GetTicksPerSecond() / 1000000));
 
-  auto& dvd_interface = m_system.GetDVDInterface();
-  DVD::DIInterruptType interrupt;
   if (buffer.size() != request.length)
   {
-    PanicAlertFmtT("The disc could not be read (at {0:#x} - {1:#x}).", request.dvd_offset,
-                   request.dvd_offset + request.length);
-
-    dvd_interface.SetDriveError(DVD::DriveError::ReadError);
-    interrupt = DVD::DIInterruptType::DEINT;
+    PanicAlertT("The disc could not be read (at 0x%" PRIx64 " - 0x%" PRIx64 ").",
+                request.dvd_offset, request.dvd_offset + request.length);
   }
   else
   {
     if (request.copy_to_ram)
-    {
-      auto& memory = m_system.GetMemory();
-      memory.CopyToEmu(request.output_address, buffer.data(), request.length);
-    }
-
-    interrupt = DVD::DIInterruptType::TCINT;
+      Memory::CopyToEmu(request.output_address, buffer.data(), request.length);
   }
 
   // Notify the emulated software that the command has been executed
-  dvd_interface.FinishExecutingCommand(request.reply_type, interrupt, cycles_late, buffer);
+  DVDInterface::FinishExecutingCommand(request.reply_type, DVDInterface::INT_TCINT, cycles_late,
+                                       buffer);
 }
 
-void DVDThread::DVDThreadMain()
+static void DVDThread()
 {
   Common::SetCurrentThreadName("DVD thread");
 
   while (true)
   {
-    m_request_queue_expanded.Wait();
+    s_request_queue_expanded.Wait();
 
-    if (m_dvd_thread_exiting.IsSet())
+    if (s_dvd_thread_exiting.IsSet())
       return;
 
     ReadRequest request;
-    while (m_request_queue.Pop(request))
+    while (s_request_queue.Pop(request))
     {
-      m_file_logger.Log(*m_disc, request.partition, request.dvd_offset);
+      FileMonitor::Log(*s_disc, request.partition, request.dvd_offset);
 
       std::vector<u8> buffer(request.length);
-      if (!m_disc->Read(request.dvd_offset, request.length, buffer.data(), request.partition))
+      if (!s_disc->Read(request.dvd_offset, request.length, buffer.data(), request.partition))
         buffer.resize(0);
 
-      request.realtime_done_us = Common::Timer::NowUs();
+      request.realtime_done_us = Common::Timer::GetTimeUs();
 
-      m_result_queue.Push(ReadResult(std::move(request), std::move(buffer)));
-      m_result_queue_expanded.Set();
+      s_result_queue.Push(ReadResult(std::move(request), std::move(buffer)));
+      s_result_queue_expanded.Set();
 
-      if (m_dvd_thread_exiting.IsSet())
+      if (s_dvd_thread_exiting.IsSet())
         return;
     }
   }
 }
-}  // namespace DVD
+}

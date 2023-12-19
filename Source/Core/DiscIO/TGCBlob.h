@@ -1,14 +1,15 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
+#include <array>
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include "Common/CommonTypes.h"
-#include "Common/IOFile.h"
+#include "Common/File.h"
 #include "DiscIO/Blob.h"
 
 namespace DiscIO
@@ -42,26 +43,19 @@ public:
   static std::unique_ptr<TGCFileReader> Create(File::IOFile file);
 
   BlobType GetBlobType() const override { return BlobType::TGC; }
-  std::unique_ptr<BlobReader> CopyReader() const override;
-
-  u64 GetRawSize() const override { return m_size; }
   u64 GetDataSize() const override;
-  DataSizeType GetDataSizeType() const override { return DataSizeType::Accurate; }
-
-  u64 GetBlockSize() const override { return 0; }
-  bool HasFastRandomAccessInBlock() const override { return true; }
-  std::string GetCompressionMethod() const override { return {}; }
-  std::optional<int> GetCompressionLevel() const override { return std::nullopt; }
-
+  u64 GetRawSize() const override { return m_size; }
   bool Read(u64 offset, u64 nbytes, u8* out_ptr) override;
 
 private:
   TGCFileReader(File::IOFile file);
 
+  bool InternalRead(u64 offset, u64 nbytes, u8* out_ptr);
+
   File::IOFile m_file;
   u64 m_size;
 
-  std::vector<u8> m_fst;
+  s64 m_file_area_shift;
 
   // Stored as big endian in memory, regardless of the host endianness
   TGCHeader m_header = {};

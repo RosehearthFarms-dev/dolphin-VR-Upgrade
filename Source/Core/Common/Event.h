@@ -1,5 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // Multithreaded event class. This allows waiting in a thread for an event to
 // be triggered in another thread. While waiting, the CPU will be available for
@@ -23,6 +24,9 @@
 
 namespace Common
 {
+// Windows uses a specific implementation because std::condition_variable has
+// terrible performance for this kind of workload with MSVC++ 2013.
+#if (!defined(_WIN32)) || (defined(_MSC_VER) && _MSC_VER > 1800)
 class Event final
 {
 public:
@@ -30,18 +34,7 @@ public:
   {
     if (m_flag.TestAndSet())
     {
-      // Lock and immediately unlock m_mutex.
-      {
-        // Holding the lock at any time between the change of our flag and notify call
-        // is sufficient to prevent a race where both of these actions
-        // happen between the other thread's predicate test and wait call
-        // which would cause wait to block until the next spurious wakeup or timeout.
-
-        // Unlocking before notification is a micro-optimization to prevent
-        // the notified thread from immediately blocking on the mutex.
-        std::lock_guard<std::mutex> lk(m_mutex);
-      }
-
+      std::lock_guard<std::mutex> lk(m_mutex);
       m_condvar.notify_one();
     }
   }
@@ -80,5 +73,31 @@ private:
   std::condition_variable m_condvar;
   std::mutex m_mutex;
 };
+#else
+class Event final
+{
+public:
+  void Set() { m_event.set(); }
+  void Wait()
+  {
+    m_event.wait();
+    m_event.reset();
+  }
+
+  template <class Rep, class Period>
+  bool WaitFor(const std::chrono::duration<Rep, Period>& rel_time)
+  {
+    bool signaled =
+        m_event.wait(
+            (u32)std::chrono::duration_cast<std::chrono::milliseconds>(rel_time).count()) == 0;
+    m_event.reset();
+    return signaled;
+  }
+
+  void Reset() { m_event.reset(); }
+private:
+  concurrency::event m_event;
+};
+#endif
 
 }  // namespace Common

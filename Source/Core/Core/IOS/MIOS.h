@@ -1,14 +1,16 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-namespace Core
+namespace IOS
 {
-class System;
-}
-
-namespace IOS::HLE::MIOS
+namespace HLE
 {
-bool Load(Core::System& system);
-}  // namespace IOS::HLE::MIOS
+namespace MIOS
+{
+bool Load();
+}  // namespace MIOS
+}  // namespace HLE
+}  // namespace IOS

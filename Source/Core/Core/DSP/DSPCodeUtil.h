@@ -1,9 +1,9 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,12 +16,12 @@ bool Disassemble(const std::vector<u16>& code, bool line_numbers, std::string& t
 bool Compare(const std::vector<u16>& code1, const std::vector<u16>& code2);
 
 // Big-endian, for writing straight to file using File::WriteStringToFile.
-std::string CodeToBinaryStringBE(const std::vector<u16>& code);
-std::vector<u16> BinaryStringBEToCode(const std::string& str);
+void CodeToBinaryStringBE(const std::vector<u16>& code, std::string& str);
+void BinaryStringBEToCode(const std::string& str, std::vector<u16>& code);
 
 // Load code (big endian binary).
-std::optional<std::vector<u16>> LoadBinary(const std::string& filename);
+bool LoadBinary(const std::string& filename, std::vector<u16>& code);
 bool SaveBinary(const std::vector<u16>& code, const std::string& filename);
 
-bool DumpDSPCode(const u8* code_be, size_t size_in_bytes, u32 crc);
+bool DumpDSPCode(const u8* code_be, int size_in_bytes, u32 crc);
 }  // namespace DSP

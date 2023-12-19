@@ -1,11 +1,13 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include <cstddef>
+#include <algorithm>
 #include <deque>
 #include <memory>
+#include <queue>
 #include <string>
 #include <vector>
 
@@ -20,69 +22,73 @@
 
 class PointerWrap;
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
 {
 struct SQueuedEvent
 {
-  u8 buffer[1024] = {};
-  u32 size = 0;
-  u16 connection_handle = 0;
+  u8 m_buffer[1024];
+  u32 m_size = 0;
+  u16 m_connectionHandle = 0;
 
-  SQueuedEvent(u32 size_, u16 handle);
-  SQueuedEvent() = default;
+  SQueuedEvent(u32 size, u16 handle);
+  SQueuedEvent() {
+    memset(m_buffer, 0, sizeof(m_buffer));
+  };
 };
 
+namespace Device
+{
 // Important to remember that this class is for /dev/usb/oh1/57e/305 ONLY
 // /dev/usb/oh1 -> internal usb bus
 // 57e/305 -> VendorID/ProductID of device on usb bus
 // This device is ONLY the internal Bluetooth module (based on BCM2045 chip)
-class BluetoothEmuDevice final : public BluetoothBaseDevice
+class BluetoothEmu final : public BluetoothBase
 {
 public:
-  BluetoothEmuDevice(EmulationKernel& ios, const std::string& device_name);
+  BluetoothEmu(Kernel& ios, const std::string& device_name);
 
-  virtual ~BluetoothEmuDevice();
+  virtual ~BluetoothEmu();
 
-  std::optional<IPCReply> Close(u32 fd) override;
-  std::optional<IPCReply> IOCtlV(const IOCtlVRequest& request) override;
+  ReturnCode Close(u32 fd) override;
+  IPCCommandResult IOCtlV(const IOCtlVRequest& request) override;
 
   void Update() override;
 
   // Send ACL data back to Bluetooth stack
-  void SendACLPacket(const bdaddr_t& source, const u8* data, u32 size);
+  void SendACLPacket(u16 connection_handle, const u8* data, u32 size);
 
-  // Returns true if controller is configured to see the connection request.
-  bool RemoteConnect(WiimoteDevice&);
-  bool RemoteDisconnect(const bdaddr_t& address);
+  bool RemoteDisconnect(u16 _connectionHandle);
 
-  WiimoteDevice* AccessWiimoteByIndex(std::size_t index);
+  std::vector<WiimoteDevice> m_WiiMotes;
+  WiimoteDevice* AccessWiiMote(const bdaddr_t& _rAddr);
+  WiimoteDevice* AccessWiiMote(u16 _ConnectionHandle);
 
   void DoState(PointerWrap& p) override;
 
 private:
-  std::array<std::unique_ptr<WiimoteDevice>, MAX_BBMOTES> m_wiimotes;
-
-  bdaddr_t m_controller_bd{{0x11, 0x02, 0x19, 0x79, 0x00, 0xff}};
+  bdaddr_t m_ControllerBD{{0x11, 0x02, 0x19, 0x79, 0x00, 0xff}};
 
   // this is used to trigger connecting via ACL
-  u8 m_scan_enable = 0;
+  u8 m_ScanEnable = 0;
 
-  std::unique_ptr<USB::V0IntrMessage> m_hci_endpoint;
-  std::unique_ptr<USB::V0BulkMessage> m_acl_endpoint;
-  std::deque<SQueuedEvent> m_event_queue;
+  std::unique_ptr<USB::V0CtrlMessage> m_CtrlSetup;
+  std::unique_ptr<USB::V0IntrMessage> m_HCIEndpoint;
+  std::unique_ptr<USB::V0BulkMessage> m_ACLEndpoint;
+  std::deque<SQueuedEvent> m_EventQueue;
 
   class ACLPool
   {
   public:
-    explicit ACLPool(EmulationKernel& ios) : m_ios(ios), m_queue() {}
+    explicit ACLPool(Kernel& ios) : m_ios(ios), m_queue() {}
     void Store(const u8* data, const u16 size, const u16 conn_handle);
 
-    void WriteToEndpoint(const USB::V0BulkMessage& endpoint);
+    void WriteToEndpoint(USB::V0BulkMessage& endpoint);
 
     bool IsEmpty() const { return m_queue.empty(); }
     // For SaveStates
     void DoState(PointerWrap& p) { p.Do(m_queue); }
-
   private:
     struct Packet
     {
@@ -91,43 +97,36 @@ private:
       u16 conn_handle;
     };
 
-    EmulationKernel& m_ios;
+    Kernel& m_ios;
     std::deque<Packet> m_queue;
-  } m_acl_pool{GetEmulationKernel()};
+  } m_acl_pool{m_ios};
 
-  u32 m_packet_count[MAX_BBMOTES] = {};
+  u32 m_PacketCount[MAX_BBMOTES] = {};
   u64 m_last_ticks = 0;
 
-  static u16 GetConnectionHandle(const bdaddr_t&);
-
-  WiimoteDevice* AccessWiimote(const bdaddr_t& address);
-  WiimoteDevice* AccessWiimote(u16 connection_handle);
-
-  static u32 GetWiimoteNumberFromConnectionHandle(u16 connection_handle);
-
   // Send ACL data to a device (wiimote)
-  void IncDataPacket(u16 connection_handle);
-  void SendToDevice(u16 connection_handle, u8* data, u32 size);
+  void IncDataPacket(u16 _ConnectionHandle);
+  void SendToDevice(u16 _ConnectionHandle, u8* _pData, u32 _Size);
 
   // Events
-  void AddEventToQueue(const SQueuedEvent& event);
-  bool SendEventCommandStatus(u16 opcode);
+  void AddEventToQueue(const SQueuedEvent& _event);
+  bool SendEventCommandStatus(u16 _Opcode);
   void SendEventCommandComplete(u16 opcode, const void* data, u32 data_size);
   bool SendEventInquiryResponse();
-  bool SendEventInquiryComplete(u8 num_responses);
-  bool SendEventRemoteNameReq(const bdaddr_t& bd);
-  bool SendEventRequestConnection(const WiimoteDevice& wiimote);
-  bool SendEventConnectionComplete(const bdaddr_t& bd, u8 status);
-  bool SendEventReadClockOffsetComplete(u16 connection_handle);
-  bool SendEventConPacketTypeChange(u16 connection_handle, u16 packet_type);
-  bool SendEventReadRemoteVerInfo(u16 connection_handle);
-  bool SendEventReadRemoteFeatures(u16 connection_handle);
-  bool SendEventRoleChange(bdaddr_t bd, bool master);
+  bool SendEventInquiryComplete();
+  bool SendEventRemoteNameReq(const bdaddr_t& _bd);
+  bool SendEventRequestConnection(WiimoteDevice& _rWiiMote);
+  bool SendEventConnectionComplete(const bdaddr_t& _bd);
+  bool SendEventReadClockOffsetComplete(u16 _connectionHandle);
+  bool SendEventConPacketTypeChange(u16 _connectionHandle, u16 _packetType);
+  bool SendEventReadRemoteVerInfo(u16 _connectionHandle);
+  bool SendEventReadRemoteFeatures(u16 _connectionHandle);
+  bool SendEventRoleChange(bdaddr_t _bd, bool _master);
   bool SendEventNumberOfCompletedPackets();
-  bool SendEventAuthenticationCompleted(u16 connection_handle);
-  bool SendEventModeChange(u16 connection_handle, u8 mode, u16 value);
-  bool SendEventDisconnect(u16 connection_handle, u8 reason);
-  bool SendEventRequestLinkKey(const bdaddr_t& bd);
+  bool SendEventAuthenticationCompleted(u16 _connectionHandle);
+  bool SendEventModeChange(u16 _connectionHandle, u8 _mode, u16 _value);
+  bool SendEventDisconnect(u16 _connectionHandle, u8 _Reason);
+  bool SendEventRequestLinkKey(const bdaddr_t& _bd);
   bool SendEventLinkKeyNotification(const u8 num_to_send);
 
   // Execute HCI Message
@@ -178,22 +177,26 @@ private:
   void CommandVendorSpecific_FC4C(const u8* input, u32 size);
   void CommandVendorSpecific_FC4F(const u8* input, u32 size);
 
+  static void DisplayDisconnectMessage(const int wiimoteNumber, const int reason);
+
 #pragma pack(push, 1)
 #define CONF_PAD_MAX_REGISTERED 10
 
-  struct ConfPadDevice
+  struct _conf_pad_device
   {
     u8 bdaddr[6];
     char name[0x40];
   };
 
-  struct ConfPads
+  struct _conf_pads
   {
     u8 num_registered;
-    ConfPadDevice registered[CONF_PAD_MAX_REGISTERED];
-    ConfPadDevice active[MAX_BBMOTES];
-    ConfPadDevice unknown;
+    _conf_pad_device registered[CONF_PAD_MAX_REGISTERED];
+    _conf_pad_device active[MAX_BBMOTES];
+    _conf_pad_device unknown;
   };
 #pragma pack(pop)
 };
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

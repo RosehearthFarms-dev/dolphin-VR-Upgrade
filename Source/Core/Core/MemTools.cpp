@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/MemTools.h"
 
@@ -8,7 +9,6 @@
 #include <cstring>
 #include <vector>
 
-#include "Common/Assert.h"
 #include "Common/CommonFuncs.h"
 #include "Common/CommonTypes.h"
 #include "Common/MsgHandler.h"
@@ -16,64 +16,47 @@
 
 #include "Core/MachineContext.h"
 #include "Core/PowerPC/JitInterface.h"
-#include "Core/System.h"
 
-#if defined(__FreeBSD__) || defined(__NetBSD__)
+#ifdef __FreeBSD__
 #include <signal.h>
 #endif
 #ifndef _WIN32
 #include <unistd.h>  // Needed for _POSIX_VERSION
 #endif
 
-#if defined(__APPLE__)
-#ifdef _M_X86_64
-#define THREAD_STATE64_COUNT x86_THREAD_STATE64_COUNT
-#define THREAD_STATE64 x86_THREAD_STATE64
-#define thread_state64_t x86_thread_state64_t
-#elif defined(_M_ARM_64)
-#define THREAD_STATE64_COUNT ARM_THREAD_STATE64_COUNT
-#define THREAD_STATE64 ARM_THREAD_STATE64
-#define thread_state64_t arm_thread_state64_t
-#else
-#error Unsupported architecture
-#endif
-#endif
-
 namespace EMM
 {
 #ifdef _WIN32
 
-static PVOID s_veh_handle;
-
-static LONG NTAPI Handler(PEXCEPTION_POINTERS pPtrs)
+LONG NTAPI Handler(PEXCEPTION_POINTERS pPtrs)
 {
   switch (pPtrs->ExceptionRecord->ExceptionCode)
   {
   case EXCEPTION_ACCESS_VIOLATION:
   {
-    ULONG_PTR access_type = pPtrs->ExceptionRecord->ExceptionInformation[0];
-    if (access_type == 8)  // Rule out DEP
+    int accessType = (int)pPtrs->ExceptionRecord->ExceptionInformation[0];
+    if (accessType == 8)  // Rule out DEP
     {
-      return EXCEPTION_CONTINUE_SEARCH;
+      return (DWORD)EXCEPTION_CONTINUE_SEARCH;
     }
 
     // virtual address of the inaccessible data
-    uintptr_t fault_address = (uintptr_t)pPtrs->ExceptionRecord->ExceptionInformation[1];
-    SContext* ctx = pPtrs->ContextRecord;
+    uintptr_t badAddress = (uintptr_t)pPtrs->ExceptionRecord->ExceptionInformation[1];
+    CONTEXT* ctx = pPtrs->ContextRecord;
 
-    if (Core::System::GetInstance().GetJitInterface().HandleFault(fault_address, ctx))
+    if (JitInterface::HandleFault(badAddress, ctx))
     {
-      return EXCEPTION_CONTINUE_EXECUTION;
+      return (DWORD)EXCEPTION_CONTINUE_EXECUTION;
     }
     else
     {
       // Let's not prevent debugging.
-      return EXCEPTION_CONTINUE_SEARCH;
+      return (DWORD)EXCEPTION_CONTINUE_SEARCH;
     }
   }
 
   case EXCEPTION_STACK_OVERFLOW:
-    if (Core::System::GetInstance().GetJitInterface().HandleStackFault())
+    if (JitInterface::HandleStackFault())
       return EXCEPTION_CONTINUE_EXECUTION;
     else
       return EXCEPTION_CONTINUE_SEARCH;
@@ -101,22 +84,18 @@ static LONG NTAPI Handler(PEXCEPTION_POINTERS pPtrs)
 
 void InstallExceptionHandler()
 {
-  ASSERT(!s_veh_handle);
-  s_veh_handle = AddVectoredExceptionHandler(TRUE, Handler);
-  ASSERT(s_veh_handle);
+  // Make sure this is only called once per process execution
+  // Instead, could make a Uninstall function, but whatever..
+  static bool handlerInstalled = false;
+  if (handlerInstalled)
+    return;
+
+  AddVectoredExceptionHandler(TRUE, Handler);
+  handlerInstalled = true;
 }
 
 void UninstallExceptionHandler()
 {
-  ULONG status = RemoveVectoredExceptionHandler(s_veh_handle);
-  ASSERT(status);
-  if (status)
-    s_veh_handle = nullptr;
-}
-
-bool IsExceptionHandlerSupported()
-{
-  return true;
 }
 
 #elif defined(__APPLE__) && !defined(USE_SIGACTION_ON_APPLE)
@@ -125,7 +104,7 @@ static void CheckKR(const char* name, kern_return_t kr)
 {
   if (kr)
   {
-    PanicAlertFmt("{} failed: kr={:x}", name, kr);
+    PanicAlert("%s failed: kr=%x", name, kr);
   }
 }
 
@@ -142,7 +121,7 @@ static void ExceptionThread(mach_port_t port)
     int64_t code[2];
     int flavor;
     mach_msg_type_number_t old_stateCnt;
-    natural_t old_state[THREAD_STATE64_COUNT];
+    natural_t old_state[x86_THREAD_STATE64_COUNT];
     mach_msg_trailer_t trailer;
   } msg_in;
 
@@ -153,11 +132,12 @@ static void ExceptionThread(mach_port_t port)
     kern_return_t RetCode;
     int flavor;
     mach_msg_type_number_t new_stateCnt;
-    natural_t new_state[THREAD_STATE64_COUNT];
+    natural_t new_state[x86_THREAD_STATE64_COUNT];
   } msg_out;
 #pragma pack()
   memset(&msg_in, 0xee, sizeof(msg_in));
   memset(&msg_out, 0xee, sizeof(msg_out));
+  mach_msg_header_t* send_msg = nullptr;
   mach_msg_size_t send_size = 0;
   mach_msg_option_t option = MACH_RCV_MSG;
   while (true)
@@ -167,7 +147,7 @@ static void ExceptionThread(mach_port_t port)
     // thread_set_exception_ports, or MACH_NOTIFY_NO_SENDERS due to
     // mach_port_request_notification.
     CheckKR("mach_msg_overwrite",
-            mach_msg_overwrite(&msg_out.Head, option, send_size, sizeof(msg_in), port,
+            mach_msg_overwrite(send_msg, option, send_size, sizeof(msg_in), port,
                                MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL, &msg_in.Head, 0));
 
     if (msg_in.Head.msgh_id == MACH_NOTIFY_NO_SENDERS)
@@ -179,20 +159,19 @@ static void ExceptionThread(mach_port_t port)
 
     if (msg_in.Head.msgh_id != 2406)
     {
-      PanicAlertFmt("unknown message received");
+      PanicAlert("unknown message received");
       return;
     }
 
-    if (msg_in.flavor != THREAD_STATE64)
+    if (msg_in.flavor != x86_THREAD_STATE64)
     {
-      PanicAlertFmt("unknown flavor {} (expected {})", msg_in.flavor, THREAD_STATE64);
+      PanicAlert("unknown flavor %d (expected %d)", msg_in.flavor, x86_THREAD_STATE64);
       return;
     }
 
-    thread_state64_t* state = (thread_state64_t*)msg_in.old_state;
+    x86_thread_state64_t* state = (x86_thread_state64_t*)msg_in.old_state;
 
-    bool ok =
-        Core::System::GetInstance().GetJitInterface().HandleFault((uintptr_t)msg_in.code[1], state);
+    bool ok = JitInterface::HandleFault((uintptr_t)msg_in.code[1], state);
 
     // Set up the reply.
     msg_out.Head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(msg_in.Head.msgh_bits), 0);
@@ -203,9 +182,9 @@ static void ExceptionThread(mach_port_t port)
     if (ok)
     {
       msg_out.RetCode = KERN_SUCCESS;
-      msg_out.flavor = THREAD_STATE64;
-      msg_out.new_stateCnt = THREAD_STATE64_COUNT;
-      memcpy(msg_out.new_state, msg_in.old_state, THREAD_STATE64_COUNT * sizeof(natural_t));
+      msg_out.flavor = x86_THREAD_STATE64;
+      msg_out.new_stateCnt = x86_THREAD_STATE64_COUNT;
+      memcpy(msg_out.new_state, msg_in.old_state, x86_THREAD_STATE64_COUNT * sizeof(natural_t));
     }
     else
     {
@@ -217,6 +196,7 @@ static void ExceptionThread(mach_port_t port)
     msg_out.Head.msgh_size =
         offsetof(__typeof__(msg_out), new_state) + msg_out.new_stateCnt * sizeof(natural_t);
 
+    send_msg = &msg_out.Head;
     send_size = msg_out.Head.msgh_size;
     option |= MACH_SEND_MSG;
   }
@@ -236,7 +216,7 @@ void InstallExceptionHandler()
   // Debuggers set the task port, so we grab the thread port.
   CheckKR("thread_set_exception_ports",
           thread_set_exception_ports(mach_thread_self(), EXC_MASK_BAD_ACCESS, port,
-                                     EXCEPTION_STATE | MACH_EXCEPTION_CODES, THREAD_STATE64));
+                                     EXCEPTION_STATE | MACH_EXCEPTION_CODES, x86_THREAD_STATE64));
   // ...and get rid of our copy so that MACH_NOTIFY_NO_SENDERS works.
   CheckKR("mach_port_mod_refs",
           mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, -1));
@@ -250,15 +230,7 @@ void UninstallExceptionHandler()
 {
 }
 
-bool IsExceptionHandlerSupported()
-{
-  return true;
-}
-
 #elif defined(_POSIX_VERSION) && !defined(_M_GENERIC)
-
-static struct sigaction old_sa_segv;
-static struct sigaction old_sa_bus;
 
 static void sigsegv_handler(int sig, siginfo_t* info, void* raw_context)
 {
@@ -283,47 +255,19 @@ static void sigsegv_handler(int sig, siginfo_t* info, void* raw_context)
   mcontext_t* ctx = &context->uc_mcontext;
 #endif
   // assume it's not a write
-  if (!Core::System::GetInstance().GetJitInterface().HandleFault(bad_address,
+  if (!JitInterface::HandleFault(bad_address,
 #ifdef __APPLE__
-                                                                 *ctx
+                                 *ctx
 #else
-                                                                 ctx
+                                 ctx
 #endif
-                                                                 ))
+                                 ))
   {
     // retry and crash
-    // According to the sigaction man page, if sa_flags "SA_SIGINFO" is set to the sigaction
-    // function pointer, otherwise sa_handler contains one of:
-    // SIG_DEF: The 'default' action is performed
-    // SIG_IGN: The signal is ignored
-    // Any other value is a function pointer to a signal handler
-
-    struct sigaction* old_sa;
-    if (sig == SIGSEGV)
-    {
-      old_sa = &old_sa_segv;
-    }
-    else
-    {
-      old_sa = &old_sa_bus;
-    }
-
-    if (old_sa->sa_flags & SA_SIGINFO)
-    {
-      old_sa->sa_sigaction(sig, info, raw_context);
-      return;
-    }
-    if (old_sa->sa_handler == SIG_DFL)
-    {
-      signal(sig, SIG_DFL);
-      return;
-    }
-    if (old_sa->sa_handler == SIG_IGN)
-    {
-      // Ignore signal
-      return;
-    }
-    old_sa->sa_handler(sig);
+    signal(SIGSEGV, SIG_DFL);
+#ifdef __APPLE__
+    signal(SIGBUS, SIG_DFL);
+#endif
   }
 }
 
@@ -338,15 +282,15 @@ void InstallExceptionHandler()
   signal_stack.ss_size = SIGSTKSZ;
   signal_stack.ss_flags = 0;
   if (sigaltstack(&signal_stack, nullptr))
-    PanicAlertFmt("sigaltstack failed");
+    PanicAlert("sigaltstack failed");
   struct sigaction sa;
   sa.sa_handler = nullptr;
   sa.sa_sigaction = &sigsegv_handler;
   sa.sa_flags = SA_SIGINFO;
   sigemptyset(&sa.sa_mask);
-  sigaction(SIGSEGV, &sa, &old_sa_segv);
+  sigaction(SIGSEGV, &sa, nullptr);
 #ifdef __APPLE__
-  sigaction(SIGBUS, &sa, &old_sa_bus);
+  sigaction(SIGBUS, &sa, nullptr);
 #endif
 }
 
@@ -358,32 +302,16 @@ void UninstallExceptionHandler()
   {
     free(old_stack.ss_sp);
   }
-  sigaction(SIGSEGV, &old_sa_segv, nullptr);
-#ifdef __APPLE__
-  sigaction(SIGBUS, &old_sa_bus, nullptr);
-#endif
 }
-
-bool IsExceptionHandlerSupported()
-{
-  return true;
-}
-
 #else  // _M_GENERIC or unsupported platform
 
 void InstallExceptionHandler()
 {
 }
-
 void UninstallExceptionHandler()
 {
 }
 
-bool IsExceptionHandlerSupported()
-{
-  return false;
-}
-
 #endif
 
-}  // namespace EMM
+}  // namespace

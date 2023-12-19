@@ -1,5 +1,6 @@
 // Copyright 2013 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 #pragma once
 #include "Common/CommonTypes.h"
 
@@ -13,8 +14,7 @@ namespace DriverDetails
 enum API
 {
   API_OPENGL = (1 << 0),
-  API_VULKAN = (1 << 1),
-  API_METAL = (1 << 2),
+  API_VULKAN = (1 << 1)
 };
 
 // Enum of supported operating systems
@@ -27,8 +27,7 @@ enum OS
   OS_ANDROID = (1 << 4),
   OS_FREEBSD = (1 << 5),
   OS_OPENBSD = (1 << 6),
-  OS_NETBSD = (1 << 7),
-  OS_HAIKU = (1 << 8),
+  OS_HAIKU = (1 << 7),
 };
 // Enum of known vendors
 // Tegra and Nvidia are separated out due to such substantial differences
@@ -44,7 +43,6 @@ enum Vendor
   VENDOR_TEGRA,
   VENDOR_VIVANTE,
   VENDOR_MESA,
-  VENDOR_APPLE,
   VENDOR_UNKNOWN
 };
 
@@ -52,21 +50,19 @@ enum Vendor
 enum Driver
 {
   DRIVER_ALL = 0,
-  DRIVER_NVIDIA,       // Official Nvidia, including mobile GPU
-  DRIVER_NOUVEAU,      // OSS nouveau
-  DRIVER_ATI,          // Official ATI
-  DRIVER_R600,         // OSS Radeon
-  DRIVER_INTEL,        // Official Intel
-  DRIVER_I965,         // OSS Intel
-  DRIVER_ARM,          // Official Mali driver
-  DRIVER_LIMA,         // OSS Mali driver
-  DRIVER_QUALCOMM,     // Official Adreno driver
-  DRIVER_FREEDRENO,    // OSS Adreno driver
-  DRIVER_IMGTEC,       // Official PowerVR driver
-  DRIVER_VIVANTE,      // Official Vivante driver
-  DRIVER_PORTABILITY,  // Vulkan via Metal on macOS
-  DRIVER_APPLE,        // Metal on macOS
-  DRIVER_UNKNOWN       // Unknown driver, default to official hardware driver
+  DRIVER_NVIDIA,     // Official Nvidia, including mobile GPU
+  DRIVER_NOUVEAU,    // OSS nouveau
+  DRIVER_ATI,        // Official ATI
+  DRIVER_R600,       // OSS Radeon
+  DRIVER_INTEL,      // Official Intel
+  DRIVER_I965,       // OSS Intel
+  DRIVER_ARM,        // Official Mali driver
+  DRIVER_LIMA,       // OSS Mali driver
+  DRIVER_QUALCOMM,   // Official Adreno driver
+  DRIVER_FREEDRENO,  // OSS Adreno driver
+  DRIVER_IMGTEC,     // Official PowerVR driver
+  DRIVER_VIVANTE,    // Official Vivante driver
+  DRIVER_UNKNOWN     // Unknown driver, default to official hardware driver
 };
 
 enum class Family
@@ -129,17 +125,13 @@ enum Bug
   // Intel HD 4000 series isn't affected by the bug
   BUG_PRIMITIVE_RESTART,
   // Bug: unsync mapping doesn't work fine
-  // Affected devices: Nvidia driver, ARM Mali
+  // Affected devices: Nvidia driver
   // Started Version: -1
   // Ended Version: -1
   // The Nvidia driver (both Windows + Linux) doesn't like unsync mapping performance wise.
   // Because of their threaded behavior, they seem not to handle unsync mapping complete unsync,
   // in fact, they serialize the driver which adds a much bigger overhead.
   // Workaround: Use BufferSubData
-  // The Mali behavior is even worse: They just ignore the unsychronized flag and stall the GPU.
-  // Workaround: As they were even too lazy to implement asynchronous buffer updates,
-  //             BufferSubData stalls as well, so we have to use the slowest possible path:
-  //             Alloc one buffer per draw call with BufferData.
   // TODO: some Windows AMD driver/GPU combination seems also affected
   //       but as they all support pinned memory, it doesn't matter
   BUG_BROKEN_UNSYNC_MAPPING,
@@ -204,6 +196,15 @@ enum Bug
   // Causes misrenderings on a large amount of things that draw lines.
   BUG_BROKEN_GEOMETRY_SHADERS,
 
+  // Bug: Explicit flush is very slow on Qualcomm
+  // Started Version: -1
+  // Ended Version: -1
+  // Our ARB_buffer_storage code uses explicit flush to avoid coherent mapping.
+  // Qualcomm seems to have lots of overhead on explicit flushing, but the coherent mapping path is
+  // fine.
+  // So let's use coherent mapping there.
+  BUG_BROKEN_EXPLICIT_FLUSH,
+
   // Bug: glGetBufferSubData for bounding box reads is slow on AMD drivers
   // Started Version: -1
   // Ended Version: -1
@@ -224,17 +225,21 @@ enum Bug
   // the gl_ClipDistance inputs from the vertex shader.
   BUG_BROKEN_CLIP_DISTANCE,
 
-  // Bug: Dual-source outputs from fragment shaders are broken on some drivers.
+  // Bug: Dual-source outputs from fragment shaders are broken on AMD Vulkan drivers
   // Started Version: -1
   // Ended Version: -1
-  // On some AMD drivers, fragment shaders that specify dual-source outputs can cause the driver to
-  // crash. Sometimes this happens in the kernel mode part of the driver, resulting in a BSOD.
-  // These shaders are also particularly problematic on macOS's Intel drivers. On OpenGL, they can
-  // cause depth issues. On Metal, they can cause the driver to not write a primitive to the depth
-  // buffer if dual source blending is output in the shader but not subsequently used in blending.
-  // Compile separate shaders for DSB on vs off for these drivers.
-  BUG_BROKEN_DUAL_SOURCE_BLENDING,
+  // Fragment shaders that specify dual-source outputs, via layout(location = 0, index = ...) cause
+  // the driver to fail to create graphics pipelines. The workaround for this is to specify the
+  // index as a MRT location instead, or omit the binding completely.
+  BUG_BROKEN_FRAGMENT_SHADER_INDEX_DECORATION,
 
+  // Bug: Dual-source outputs from fragment shaders are broken on AMD OpenGL drivers
+  // Started Version: -1
+  // Ended Version: -1
+  // Fragment shaders that specify dual-source outputs, cause the driver to crash
+  // sometimes this happens in the kernel mode part of the driver resulting in a BSOD.
+  // Disable dual-source blending support for now.
+  BUG_BROKEN_DUAL_SOURCE_BLENDING,
   // BUG: ImgTec GLSL shader compiler fails when negating the input to a bitwise operation
   // Started version: 1.5
   // Ended version: 1.8@4693462
@@ -243,11 +248,8 @@ enum Bug
   // the negated value to a temporary variable then using that in the bitwise op.
   BUG_BROKEN_BITWISE_OP_NEGATION,
 
-  // BUG: The GPU shader code appears to be context-specific on Mesa/i965.
-  // This means that if we compiled the ubershaders asynchronously, they will be recompiled
-  // on the main thread the first time they are used, causing stutter. For now, disable
-  // asynchronous compilation on Mesa i965. On nouveau, our use of glFinish() can cause
-  // crashes and/or lockups.
+  // Bug: Shaders are recompiled on the main thread after being previously compiled on
+  // a worker thread on Mesa i965.
   // Started version: -1
   // Ended Version: -1
   BUG_SHARED_CONTEXT_SHADER_COMPILATION,
@@ -269,70 +271,6 @@ enum Bug
   // Started Version: 1.7
   // Ended Version: 1.10
   BUG_BROKEN_CLEAR_LOADOP_RENDERPASS,
-
-  // BUG: 32-bit depth clears are broken in the Adreno Vulkan driver, and have no effect.
-  // To work around this, we use a D24_S8 buffer instead, which results in a loss of accuracy.
-  // We still resolve this to a R32F texture, as there is no 24-bit format.
-  // Started version: -1
-  // Ended version: -1
-  BUG_BROKEN_D32F_CLEAR,
-
-  // BUG: Reversed viewport depth range does not work as intended on some Vulkan drivers.
-  // The Vulkan spec allows the minDepth/maxDepth fields in the viewport to be reversed,
-  // however the implementation is broken on some drivers.
-  BUG_BROKEN_REVERSED_DEPTH_RANGE,
-
-  // BUG: Cached memory is significantly slower for readbacks than coherent memory in the
-  // Mali Vulkan driver, causing high CPU usage in the __pi___inval_cache_range kernel
-  // function. This flag causes readback buffers to select the coherent type.
-  BUG_SLOW_CACHED_READBACK_MEMORY,
-
-  // BUG: Apparently ARM Mali GLSL compiler managed to break bitwise AND operations between
-  // two integers vectors, when one of them is non-constant (though the exact cases of when
-  // this occurs are still unclear). The resulting vector from the operation will be the
-  // constant vector.
-  // Easy enough to fix, just do the bitwise AND operation on the vector components first and
-  // then construct the final vector.
-  // Started version: -1
-  // Ended version: -1
-  BUG_BROKEN_VECTOR_BITWISE_AND,
-
-  // BUG: Accessing gl_SubgroupInvocationID causes the Metal shader compiler to crash.
-  //      Affected devices: AMD (older macOS)
-  // BUG: gl_HelperInvocation always returns true, even for non-helper invocations
-  //      Affected devices: AMD (newer macOS)
-  // BUG: Using subgroupMax in a shader that can discard results in garbage data
-  //      (For some reason, this only happens at 4x+ IR on Metal, but 2x+ IR on MoltenVK)
-  //      Affected devices: Intel (macOS)
-  // Started version: -1
-  // Ended version: -1
-  BUG_BROKEN_SUBGROUP_OPS,
-
-  // BUG: Multi-threaded shader pre-compilation sometimes crashes
-  // Used primarily in Videoconfig.cpp's GetNumAutoShaderPreCompilerThreads()
-  // refer to https://github.com/dolphin-emu/dolphin/pull/9414 for initial validation coverage
-  BUG_BROKEN_MULTITHREADED_SHADER_PRECOMPILATION,
-
-  // BUG: Some driver and Apple Silicon GPU combinations have problems with fragment discard when
-  // early depth test is enabled. Discarded fragments may appear corrupted (Super Mario Sunshine,
-  // Sonic Adventure 2: Battle, Phantasy Star Online Epsiodes 1 & 2, etc).
-  // Affected devices: Apple Silicon GPUs of Apple family 4 and newer.
-  // Started version: -1
-  // Ended version: -1
-  BUG_BROKEN_DISCARD_WITH_EARLY_Z,
-
-  // BUG: Using dynamic sampler indexing locks up the GPU
-  // Affected devices: Intel (macOS Metal)
-  // Started version: -1
-  // Ended version: -1
-  BUG_BROKEN_DYNAMIC_SAMPLER_INDEXING,
-
-  // BUG: vkCmdCopyImageToBuffer allocates a staging image when used to copy from
-  // an image with optimal tiling.
-  // Affected devices: Adreno
-  // Started Version: -1
-  // Ended Version: -1
-  BUG_SLOW_OPTIMAL_IMAGE_TO_BUFFER_COPY
 };
 
 // Initializes our internal vendor, device family, and driver version
@@ -341,4 +279,7 @@ void Init(API api, Vendor vendor, Driver driver, const double version, const Fam
 // Once Vendor and driver version is set, this will return if it has the applicable bug passed to
 // it.
 bool HasBug(Bug bug);
-}  // namespace DriverDetails
+
+// Attempts to map a PCI vendor ID to our Vendor enumeration
+Vendor TranslatePCIVendorID(u32 vendor_id);
+}

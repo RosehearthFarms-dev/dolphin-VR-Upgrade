@@ -8,6 +8,10 @@
 ///
 ////////////////////////////////////////////////////////////////////////////////
 //
+// $Id: InterpolateLinear.h 225 2015-07-26 14:45:48Z oparviai $
+//
+////////////////////////////////////////////////////////////////////////////////
+//
 // License :
 //
 //  SoundTouch audio processing library
@@ -38,41 +42,38 @@
 namespace soundtouch
 {
 
-/// Linear transposer class that uses integer arithmetic
+/// Linear transposer class that uses integer arithmetics
 class InterpolateLinearInteger : public TransposerBase
 {
 protected:
     int iFract;
     int iRate;
 
+    virtual void resetRegisters();
+
     virtual int transposeMono(SAMPLETYPE *dest, 
                        const SAMPLETYPE *src, 
-                       int &srcSamples) override;
+                       int &srcSamples);
     virtual int transposeStereo(SAMPLETYPE *dest, 
                          const SAMPLETYPE *src, 
-                         int &srcSamples) override;
-    virtual int transposeMulti(SAMPLETYPE *dest, const SAMPLETYPE *src, int &srcSamples) override;
+                         int &srcSamples);
+    virtual int transposeMulti(SAMPLETYPE *dest, const SAMPLETYPE *src, int &srcSamples);
 public:
     InterpolateLinearInteger();
 
     /// Sets new target rate. Normal rate = 1.0, smaller values represent slower 
     /// rate, larger faster rates.
-    virtual void setRate(double newRate) override;
-
-    virtual void resetRegisters() override;
-
-    virtual int getLatency() const override
-    {
-        return 0;
-    }
+    virtual void setRate(double newRate);
 };
 
 
-/// Linear transposer class that uses floating point arithmetic
+/// Linear transposer class that uses floating point arithmetics
 class InterpolateLinearFloat : public TransposerBase
 {
 protected:
     double fract;
+
+    virtual void resetRegisters();
 
     virtual int transposeMono(SAMPLETYPE *dest, 
                        const SAMPLETYPE *src, 
@@ -84,13 +85,6 @@ protected:
 
 public:
     InterpolateLinearFloat();
-
-    virtual void resetRegisters();
-
-    int getLatency() const
-    {
-        return 0;
-    }
 };
 
 }

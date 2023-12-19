@@ -1,22 +1,32 @@
-// Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+#include <disasm.h>  // Bochs
+
+#if defined(HAVE_LLVM)
+// PowerPC.h defines PC.
+// This conflicts with a function that has an argument named PC
+#undef PC
+#include <llvm-c/Disassembler.h>
+#include <llvm-c/Target.h>
+#endif
+
+#include "Common/StringUtil.h"
+
+#include "Core/PowerPC/JitCommon/JitBase.h"
+#include "Core/PowerPC/JitCommon/JitCache.h"
+#include "Core/PowerPC/JitInterface.h"
 
 #include "UICommon/Disassembler.h"
 
-#include <sstream>
+class HostDisassemblerX86 : public HostDisassembler
+{
+public:
+  HostDisassemblerX86();
 
-#if defined(HAVE_LLVM)
-#include <fmt/format.h>
-#include <llvm-c/Disassembler.h>
-#include <llvm-c/Target.h>
-#elif defined(_M_X86_64)
-#include <disasm.h>  // Bochs
-#endif
+private:
+  disassembler m_disasm;
 
-#include "Common/Assert.h"
-#include "Common/VariantUtil.h"
-#include "Core/PowerPC/JitInterface.h"
-#include "Core/System.h"
+  std::string DisassembleHostBlock(const u8* code_start, const u32 code_size,
+                                   u32* host_instructions_count, u64 starting_pc) override;
+};
 
 #if defined(HAVE_LLVM)
 class HostDisassemblerLLVM : public HostDisassembler
@@ -47,8 +57,7 @@ HostDisassemblerLLVM::HostDisassemblerLLVM(const std::string& host_disasm, int i
   LLVMInitializeAllTargetMCs();
   LLVMInitializeAllDisassemblers();
 
-  m_llvm_context =
-      LLVMCreateDisasmCPU(host_disasm.c_str(), cpu.c_str(), nullptr, 0, nullptr, nullptr);
+  m_llvm_context = LLVMCreateDisasmCPU(host_disasm.c_str(), cpu.c_str(), nullptr, 0, 0, nullptr);
 
   // Couldn't create llvm context
   if (!m_llvm_context)
@@ -86,9 +95,9 @@ std::string HostDisassemblerLLVM::DisassembleHostBlock(const u8* code_start, con
       {
         // If we are on an architecture that has a fixed instruction size
         // We can continue onward past this bad instruction.
-        std::string inst_str;
+        std::string inst_str = "";
         for (int i = 0; i < m_instruction_size; ++i)
-          inst_str += fmt::format("{:02x}", disasmPtr[i]);
+          inst_str += StringFromFormat("%02x", disasmPtr[i]);
 
         x86_disasm << inst_str << std::endl;
         disasmPtr += m_instruction_size;
@@ -97,9 +106,9 @@ std::string HostDisassemblerLLVM::DisassembleHostBlock(const u8* code_start, con
       {
         // We can't continue if we are on an architecture that has flexible instruction sizes
         // Dump the rest of the block instead
-        std::string code_block;
+        std::string code_block = "";
         for (int i = 0; (disasmPtr + i) < end; ++i)
-          code_block += fmt::format("{:02x}", disasmPtr[i]);
+          code_block += StringFromFormat("%02x", disasmPtr[i]);
 
         x86_disasm << code_block << std::endl;
         break;
@@ -117,18 +126,7 @@ std::string HostDisassemblerLLVM::DisassembleHostBlock(const u8* code_start, con
 
   return x86_disasm.str();
 }
-#elif defined(_M_X86_64)
-class HostDisassemblerX86 : public HostDisassembler
-{
-public:
-  HostDisassemblerX86();
-
-private:
-  disassembler m_disasm;
-
-  std::string DisassembleHostBlock(const u8* code_start, const u32 code_size,
-                                   u32* host_instructions_count, u64 starting_pc) override;
-};
+#endif
 
 HostDisassemblerX86::HostDisassemblerX86()
 {
@@ -152,7 +150,6 @@ std::string HostDisassemblerX86::DisassembleHostBlock(const u8* code_start, cons
 
   return x86_disasm.str();
 }
-#endif
 
 std::unique_ptr<HostDisassembler> GetNewDisassembler(const std::string& arch)
 {
@@ -163,46 +160,28 @@ std::unique_ptr<HostDisassembler> GetNewDisassembler(const std::string& arch)
     return std::make_unique<HostDisassemblerLLVM>("aarch64-none-unknown", 4, "cortex-a57");
   if (arch == "armv7")
     return std::make_unique<HostDisassemblerLLVM>("armv7-none-unknown", 4, "cortex-a15");
-#elif defined(_M_X86_64)
+#elif defined(_M_X86)
   if (arch == "x86")
     return std::make_unique<HostDisassemblerX86>();
 #endif
   return std::make_unique<HostDisassembler>();
 }
 
-DisassembleResult DisassembleBlock(HostDisassembler* disasm, u32 address)
+std::string DisassembleBlock(HostDisassembler* disasm, u32* address, u32* host_instructions_count,
+                             u32* code_size)
 {
-  auto res = Core::System::GetInstance().GetJitInterface().GetHostCode(address);
+  const u8* code;
+  int res = JitInterface::GetHostCode(address, &code, code_size);
 
-  return std::visit(overloaded{[&](JitInterface::GetHostCodeError error) {
-                                 DisassembleResult result;
-                                 switch (error)
-                                 {
-                                 case JitInterface::GetHostCodeError::NoJitActive:
-                                   result.text = "(No JIT active)";
-                                   break;
-                                 case JitInterface::GetHostCodeError::NoTranslation:
-                                   result.text = "(No translation)";
-                                   break;
-                                 default:
-                                   ASSERT(false);
-                                   break;
-                                 }
-                                 result.entry_address = address;
-                                 result.instruction_count = 0;
-                                 result.code_size = 0;
-                                 return result;
-                               },
-                               [&](JitInterface::GetHostCodeResult host_result) {
-                                 DisassembleResult new_result;
-                                 u32 instruction_count = 0;
-                                 new_result.text = disasm->DisassembleHostBlock(
-                                     host_result.code, host_result.code_size, &instruction_count,
-                                     (u64)host_result.code);
-                                 new_result.entry_address = host_result.entry_address;
-                                 new_result.code_size = host_result.code_size;
-                                 new_result.instruction_count = instruction_count;
-                                 return new_result;
-                               }},
-                    res);
+  if (res == 1)
+  {
+    *host_instructions_count = 0;
+    return "(No JIT active)";
+  }
+  else if (res == 2)
+  {
+    host_instructions_count = 0;
+    return "(No translation)";
+  }
+  return disasm->DisassembleHostBlock(code, *code_size, host_instructions_count, (u64)code);
 }

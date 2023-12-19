@@ -1,10 +1,11 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <memory>
-#include <string_view>
+#include <string>
 
 #include "Common/CommonTypes.h"
 #include "DiscIO/Blob.h"
@@ -19,20 +20,11 @@ class VolumeFileBlobReader final : public BlobReader
 {
 public:
   static std::unique_ptr<VolumeFileBlobReader>
-  Create(const Volume& volume, const Partition& partition, std::string_view file_path);
+  Create(const Volume& volume, const Partition& partition, const std::string& file_path);
 
   BlobType GetBlobType() const override { return BlobType::PLAIN; }
-  std::unique_ptr<BlobReader> CopyReader() const override;
-
-  u64 GetRawSize() const override;
   u64 GetDataSize() const override;
-  DataSizeType GetDataSizeType() const override { return DataSizeType::Accurate; }
-
-  u64 GetBlockSize() const override;
-  bool HasFastRandomAccessInBlock() const override;
-  std::string GetCompressionMethod() const override;
-  std::optional<int> GetCompressionLevel() const override;
-
+  u64 GetRawSize() const override;
   bool Read(u64 offset, u64 length, u8* out_ptr) override;
 
 private:
@@ -43,4 +35,4 @@ private:
   const Partition& m_partition;
   std::unique_ptr<FileInfo> m_file_info;
 };
-}  // namespace DiscIO
+}  // namespace

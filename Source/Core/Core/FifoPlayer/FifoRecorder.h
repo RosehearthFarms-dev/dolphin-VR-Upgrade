@@ -1,28 +1,24 @@
 // Copyright 2011 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <vector>
 
-#include "Common/Assert.h"
-#include "Common/HookableEvent.h"
 #include "Core/FifoPlayer/FifoDataFile.h"
 
 class FifoRecorder
 {
 public:
-  using CallbackFunc = std::function<void()>;
+  typedef void (*CallbackFunc)(void);
 
   FifoRecorder();
 
   void StartRecording(s32 numFrames, CallbackFunc finishedCb);
   void StopRecording();
-
-  bool IsRecordingDone() const;
 
   FifoDataFile* GetRecordedFile() const;
   // Called from video thread
@@ -49,10 +45,6 @@ public:
   static FifoRecorder& GetInstance();
 
 private:
-  class FifoRecordAnalyzer;
-
-  void RecordInitialVideoMemory();
-
   // Accessed from both GUI and video threads
 
   std::recursive_mutex m_mutex;
@@ -62,7 +54,7 @@ private:
   bool m_WasRecording = false;
   bool m_RequestedRecordingEnd = false;
   s32 m_RecordFramesRemaining = 0;
-  CallbackFunc m_FinishedCb;
+  CallbackFunc m_FinishedCb = nullptr;
   std::unique_ptr<FifoDataFile> m_File;
 
   // Accessed only from video thread
@@ -71,10 +63,7 @@ private:
   bool m_SkipFutureData = true;
   bool m_FrameEnded = false;
   FifoFrameInfo m_CurrentFrame;
-  std::unique_ptr<FifoRecordAnalyzer> m_record_analyzer;
   std::vector<u8> m_FifoData;
   std::vector<u8> m_Ram;
   std::vector<u8> m_ExRam;
-
-  Common::EventHook m_end_of_frame_event;
 };

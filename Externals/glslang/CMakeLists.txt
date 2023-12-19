@@ -1,14 +1,6 @@
 set(SRCS
 	glslang/GenericCodeGen/CodeGen.cpp
 	glslang/GenericCodeGen/Link.cpp
-	#glslang/HLSL/hlslAttributes.cpp
-	#glslang/HLSL/hlslGrammar.cpp
-	#glslang/HLSL/hlslOpMap.cpp
-	#glslang/HLSL/hlslParseables.cpp
-	#glslang/HLSL/hlslParseHelper.cpp
-	#glslang/HLSL/hlslScanContext.cpp
-	#glslang/HLSL/hlslTokenStream.cpp
-	glslang/MachineIndependent/attribute.cpp
 	glslang/MachineIndependent/Constant.cpp
 	glslang/MachineIndependent/glslang_tab.cpp
 	glslang/MachineIndependent/InfoSink.cpp
@@ -16,26 +8,32 @@ set(SRCS
 	glslang/MachineIndependent/Intermediate.cpp
 	glslang/MachineIndependent/intermOut.cpp
 	glslang/MachineIndependent/IntermTraverse.cpp
-	glslang/MachineIndependent/iomapper.cpp
 	glslang/MachineIndependent/limits.cpp
 	glslang/MachineIndependent/linkValidate.cpp
 	glslang/MachineIndependent/parseConst.cpp
-	glslang/MachineIndependent/ParseContextBase.cpp
 	glslang/MachineIndependent/ParseHelper.cpp
 	glslang/MachineIndependent/PoolAlloc.cpp
 	glslang/MachineIndependent/preprocessor/Pp.cpp
 	glslang/MachineIndependent/preprocessor/PpAtom.cpp
 	glslang/MachineIndependent/preprocessor/PpContext.cpp
+	glslang/MachineIndependent/preprocessor/PpMemory.cpp
 	glslang/MachineIndependent/preprocessor/PpScanner.cpp
+	glslang/MachineIndependent/preprocessor/PpSymbols.cpp
 	glslang/MachineIndependent/preprocessor/PpTokens.cpp
 	glslang/MachineIndependent/propagateNoContraction.cpp
 	glslang/MachineIndependent/reflection.cpp
 	glslang/MachineIndependent/RemoveTree.cpp
 	glslang/MachineIndependent/Scan.cpp
 	glslang/MachineIndependent/ShaderLang.cpp
-	glslang/MachineIndependent/SpirvIntrinsics.cpp
 	glslang/MachineIndependent/SymbolTable.cpp
 	glslang/MachineIndependent/Versions.cpp
+
+	hlsl/hlslGrammar.cpp
+	hlsl/hlslOpMap.cpp
+	hlsl/hlslParseables.cpp
+	hlsl/hlslParseHelper.cpp
+	hlsl/hlslScanContext.cpp
+	hlsl/hlslTokenStream.cpp
 	OGLCompilersDLL/InitializeDll.cpp
 	SPIRV/disassemble.cpp
 	SPIRV/doc.cpp
@@ -43,10 +41,7 @@ set(SRCS
 	SPIRV/InReadableOrder.cpp
 	SPIRV/Logger.cpp
 	SPIRV/SpvBuilder.cpp
-	SPIRV/SpvPostProcess.cpp
 	SPIRV/SPVRemapper.cpp
-	SPIRV/SpvTools.cpp
-	StandAlone/ResourceLimits.cpp
 )
 
 if(WIN32)
@@ -73,9 +68,3 @@ endif()
 endif()
 
 add_library(glslang STATIC ${SRCS})
-dolphin_disable_warnings_msvc(glslang)
-
-target_include_directories(glslang
-PRIVATE
-	${CMAKE_SOURCE_DIR}/Externals/glslang
-)

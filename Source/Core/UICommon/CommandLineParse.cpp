@@ -1,10 +1,8 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "UICommon/CommandLineParse.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <list>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -15,6 +13,7 @@
 #include "Common/StringUtil.h"
 #include "Common/Version.h"
 #include "Core/Config/MainSettings.h"
+#include "UICommon/CommandLineParse.h"
 
 namespace CommandLineParse
 {
@@ -22,25 +21,15 @@ class CommandLineConfigLayerLoader final : public Config::ConfigLayerLoader
 {
 public:
   CommandLineConfigLayerLoader(const std::list<std::string>& args, const std::string& video_backend,
-                               const std::string& audio_backend, bool batch, bool debugger)
+                               const std::string& audio_backend)
       : ConfigLayerLoader(Config::LayerType::CommandLine)
   {
-    if (!video_backend.empty())
-      m_values.emplace_back(Config::MAIN_GFX_BACKEND.GetLocation(), video_backend);
+    if (video_backend.size())
+      m_values.emplace_back(std::make_tuple(Config::MAIN_GFX_BACKEND.location, video_backend));
 
-    if (!audio_backend.empty())
-    {
-      m_values.emplace_back(Config::MAIN_DSP_HLE.GetLocation(),
-                            ValueToString(audio_backend == "HLE"));
-    }
-
-    // Batch mode hides the main window, and render to main hides the render window. To avoid a
-    // situation where we would have no window at all, disable render to main when using batch mode.
-    if (batch)
-      m_values.emplace_back(Config::MAIN_RENDER_TO_MAIN.GetLocation(), ValueToString(false));
-
-    if (debugger)
-      m_values.emplace_back(Config::MAIN_ENABLE_DEBUGGING.GetLocation(), ValueToString(true));
+    if (audio_backend.size())
+      m_values.emplace_back(
+          std::make_tuple(Config::MAIN_DSP_HLE.location, StringFromBool(audio_backend == "HLE")));
 
     // Arguments are in the format of <System>.<Section>.<Key>=Value
     for (const auto& arg : args)
@@ -51,13 +40,8 @@ public:
       std::getline(buffer, section, '.');
       std::getline(buffer, key, '=');
       std::getline(buffer, value, '=');
-      std::optional<Config::System> system = Config::GetSystemFromName(system_str);
-      if (system)
-      {
-        m_values.emplace_back(
-            Config::Location{std::move(*system), std::move(section), std::move(key)},
-            std::move(value));
-      }
+      Config::System system = Config::GetSystemFromName(system_str);
+      m_values.emplace_back(std::make_tuple(Config::ConfigLocation{system, section, key}, value));
     }
   }
 
@@ -75,18 +59,18 @@ public:
   }
 
 private:
-  std::list<std::tuple<Config::Location, std::string>> m_values;
+  std::list<std::tuple<Config::ConfigLocation, std::string>> m_values;
 };
 
 std::unique_ptr<optparse::OptionParser> CreateParser(ParserOptions options)
 {
   auto parser = std::make_unique<optparse::OptionParser>();
-  parser->usage("usage: %prog [options]... [FILE]...").version(Common::GetScmRevStr());
+  parser->usage("usage: %prog [options]... [FILE]...").version(Common::scm_rev_str);
 
   parser->add_option("-u", "--user").action("store").help("User folder path");
   parser->add_option("-m", "--movie").action("store").help("Play a movie file");
   parser->add_option("-e", "--exec")
-      .action("append")
+      .action("store")
       .metavar("<file>")
       .type("string")
       .help("Load the specified file");
@@ -100,21 +84,14 @@ std::unique_ptr<optparse::OptionParser> CreateParser(ParserOptions options)
       .metavar("<System>.<Section>.<Key>=<Value>")
       .type("string")
       .help("Set a configuration option");
-  parser->add_option("-s", "--save_state")
-      .action("store")
-      .metavar("<file>")
-      .type("string")
-      .help("Load the initial save state");
 
   if (options == ParserOptions::IncludeGUIOptions)
   {
     parser->add_option("-d", "--debugger")
         .action("store_true")
         .help("Show the debugger pane and additional View menu options");
-    parser->add_option("-l", "--logger").action("store_true").help("Open the logger");
-    parser->add_option("-b", "--batch")
-        .action("store_true")
-        .help("Run Dolphin without the user interface (Requires --exec or --nand-title)");
+    parser->add_option("-l", "--logger").action("store_true").help("Opens the logger");
+    parser->add_option("-b", "--batch").action("store_true").help("Exit Dolphin with emulation");
     parser->add_option("-c", "--confirm").action("store_true").help("Set Confirm on Stop");
   }
 
@@ -125,33 +102,34 @@ std::unique_ptr<optparse::OptionParser> CreateParser(ParserOptions options)
       .choices({"HLE", "LLE"})
       .help("Choose audio emulation from [%choices]");
 
+  // VR (BTW: I hacked the parser so long options also work with a single "-", these should only have one "-")
+  // -vr option like in Oculus Rift Source engine games and Doom 3 BFG
+  parser->add_option("--vr").action("store_true").help("Force Virtual Reality on");
+  // -steamvr option to use SteamVR instead of Oculus
+  parser->add_option("--steamvr").action("store_true").help("Use SteamVR instead of Oculus, and force VR on");
+  // -oculus option to use Oculus instead of SteamVR, and to force virtual reality on
+  parser->add_option("--oculus").action("store_true").help("Use Oculus instead of SteamVR, and force VR on");
+  parser->add_option("--onehmd").action("store_true").help("Only use a single HMD if multiple are present");
+  // -force-d3d11 and -force-ogl options like in Oculus Rift unity demos
+  // TODO: modify this parser to allow this. Note, wxwidgets had to be modified to allow this
+  parser->add_option("--force-d3d11").action("store_true").help("Force use of Direct3D 11 backend");
+  parser->add_option("--force-opengl").action("store_true").help("Force use of OpenGL backend");
+  parser->add_option("--bruteforce").action("store").help("Return value for brute forcing Action Replay culling codes (needs save state 1 and map file)");
+
   return parser;
-}
-
-static void AddConfigLayer(const optparse::Values& options)
-{
-  std::list<std::string> config_args;
-  if (options.is_set_by_user("config"))
-    config_args = options.all("config");
-
-  Config::AddLayer(std::make_unique<CommandLineConfigLayerLoader>(
-      std::move(config_args), static_cast<const char*>(options.get("video_backend")),
-      static_cast<const char*>(options.get("audio_emulation")),
-      static_cast<bool>(options.get("batch")), static_cast<bool>(options.get("debugger"))));
 }
 
 optparse::Values& ParseArguments(optparse::OptionParser* parser, int argc, char** argv)
 {
   optparse::Values& options = parser->parse_args(argc, argv);
-  AddConfigLayer(options);
-  return options;
-}
 
-optparse::Values& ParseArguments(optparse::OptionParser* parser,
-                                 const std::vector<std::string>& arguments)
-{
-  optparse::Values& options = parser->parse_args(arguments);
-  AddConfigLayer(options);
+  const std::list<std::string>& config_args = options.all("config");
+  if (config_args.size())
+  {
+    Config::AddLayer(std::make_unique<CommandLineConfigLayerLoader>(
+        config_args, static_cast<const char*>(options.get("video_backend")),
+        static_cast<const char*>(options.get("audio_emulation"))));
+  }
   return options;
 }
-}  // namespace CommandLineParse
+}

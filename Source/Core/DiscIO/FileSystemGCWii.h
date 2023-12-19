@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -8,7 +9,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "Common/CommonTypes.h"
@@ -16,7 +16,7 @@
 
 namespace DiscIO
 {
-class VolumeDisc;
+class Volume;
 struct Partition;
 
 class FileInfoGCWii : public FileInfo
@@ -41,11 +41,9 @@ public:
 
   u64 GetOffset() const override;
   u32 GetSize() const override;
-  bool IsRoot() const override;
   bool IsDirectory() const override;
   u32 GetTotalChildren() const override;
   std::string GetName() const override;
-  bool NameCaseInsensitiveEquals(std::string_view other) const override;
   std::string GetPath() const override;
 
   bool IsValid(u64 fst_size, const FileInfoGCWii& parent_directory) const;
@@ -87,12 +85,12 @@ private:
 class FileSystemGCWii : public FileSystem
 {
 public:
-  FileSystemGCWii(const VolumeDisc* volume, const Partition& partition);
+  FileSystemGCWii(const Volume* volume, const Partition& partition);
   ~FileSystemGCWii() override;
 
   bool IsValid() const override { return m_valid; }
   const FileInfo& GetRoot() const override;
-  std::unique_ptr<FileInfo> FindFileInfo(std::string_view path) const override;
+  std::unique_ptr<FileInfo> FindFileInfo(const std::string& path) const override;
   std::unique_ptr<FileInfo> FindFileInfo(u64 disc_offset) const override;
 
 private:
@@ -102,7 +100,7 @@ private:
   // Maps the end offset of files to FST indexes
   mutable std::map<u64, u32> m_offset_file_info_cache;
 
-  std::unique_ptr<FileInfo> FindFileInfo(std::string_view path, const FileInfo& file_info) const;
+  std::unique_ptr<FileInfo> FindFileInfo(const std::string& path, const FileInfo& file_info) const;
 };
 
-}  // namespace DiscIO
+}  // namespace

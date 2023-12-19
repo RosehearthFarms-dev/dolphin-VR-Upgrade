@@ -1,7 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "VideoCommon/TextureDecoder.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <algorithm>
 #include <cmath>
@@ -11,7 +10,9 @@
 #include "Common/Swap.h"
 
 #include "VideoCommon/LookUpTables.h"
+#include "VideoCommon/TextureDecoder.h"
 #include "VideoCommon/TextureDecoder_Util.h"
+//#include "VideoCommon/VideoCommon.h" // to get debug logs
 #include "VideoCommon/VideoConfig.h"
 
 // GameCube/Wii texture decoder
@@ -116,8 +117,8 @@ static inline void DecodeBytes_IA4(u32* dst, const u8* src)
 static inline void DecodeBytes_RGB5A3(u32* dst, const u16* src)
 {
 #if 0
-  for (int x = 0; x < 4; x++)
-    dst[x] = DecodePixel_RGB5A3(Common::swap16(src[x]));
+	for (int x = 0; x < 4; x++)
+		dst[x] = DecodePixel_RGB5A3(Common::swap16(src[x]));
 #else
   dst[0] = DecodePixel_RGB5A3(Common::swap16(src[0]));
   dst[1] = DecodePixel_RGB5A3(Common::swap16(src[1]));
@@ -129,10 +130,10 @@ static inline void DecodeBytes_RGB5A3(u32* dst, const u16* src)
 static inline void DecodeBytes_RGBA8(u32* dst, const u16* src, const u16* src2)
 {
 #if 0
-  for (int x = 0; x < 4; x++)
-  {
-    dst[x] =  ((src[x] & 0xFF) << 24) | ((src[x] & 0xFF00)>>8)  | (src2[x] << 8);
-  }
+	for (int x = 0; x < 4; x++)
+	{
+		dst[x] =  ((src[x] & 0xFF) << 24) | ((src[x] & 0xFF00)>>8)  | (src2[x] << 8);
+	}
 #else
   dst[0] = ((src[0] & 0xFF) << 24) | ((src[0] & 0xFF00) >> 8) | (src2[0] << 8);
   dst[1] = ((src[1] & 0xFF) << 24) | ((src[1] & 0xFF00) >> 8) | (src2[1] << 8);
@@ -345,8 +346,5 @@ void _TexDecoder_DecodeImpl(u32* dst, const u8* src, int width, int height, Text
       }
       break;
     }
-  case TextureFormat::XFB:
-    TexDecoder_DecodeXFB(reinterpret_cast<u8*>(dst), src, width, height, width * 2);
-    break;
   }
 }

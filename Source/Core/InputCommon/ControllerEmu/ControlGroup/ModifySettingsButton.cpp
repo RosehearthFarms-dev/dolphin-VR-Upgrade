@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "InputCommon/ControllerEmu/ControlGroup/ModifySettingsButton.h"
 
@@ -12,6 +13,7 @@
 #include "InputCommon/ControlReference/ControlReference.h"
 #include "InputCommon/ControllerEmu/Control/Control.h"
 #include "InputCommon/ControllerEmu/Control/Input.h"
+#include "InputCommon/ControllerEmu/Setting/BooleanSetting.h"
 #include "InputCommon/ControllerEmu/Setting/NumericSetting.h"
 #include "VideoCommon/OnScreenDisplay.h"
 
@@ -20,57 +22,64 @@ namespace ControllerEmu
 ModifySettingsButton::ModifySettingsButton(std::string button_name)
     : Buttons(std::move(button_name))
 {
+  numeric_settings.emplace_back(std::make_unique<NumericSetting>(_trans("Threshold"), 0.5));
 }
 
 void ModifySettingsButton::AddInput(std::string button_name, bool toggle)
 {
-  ControlGroup::AddInput(Translatability::Translate, std::move(button_name));
-  m_threshold_exceeded.emplace_back(false);
-  m_associated_settings.emplace_back(false);
-  m_associated_settings_toggle.emplace_back(toggle);
+  controls.emplace_back(new Input(std::move(button_name)));
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+  threshold_exceeded.push_back(false);
+  associated_settings.push_back(false);
+  associated_settings_toggle.push_back(toggle);
+#else
+  threshold_exceeded.emplace_back(false);
+  associated_settings.emplace_back(false);
+  associated_settings_toggle.emplace_back(toggle);
+#endif
 }
 
-void ModifySettingsButton::UpdateState()
+void ModifySettingsButton::GetState()
 {
   for (size_t i = 0; i < controls.size(); ++i)
   {
-    const bool state = controls[i]->GetState<bool>();
+    ControlState state = controls[i]->control_ref->State();
 
-    if (!m_associated_settings_toggle[i])
+    if (!associated_settings_toggle[i])
     {
       // not toggled
-      m_associated_settings[i] = state;
+      associated_settings[i] = state > numeric_settings[0]->GetValue();
     }
     else
     {
       // toggle (loading savestates does not en-/disable toggle)
       // after we passed the threshold, we en-/disable. but after that, we don't change it
       // anymore
-      if (!m_threshold_exceeded[i] && state)
+      if (!threshold_exceeded[i] && state > numeric_settings[0]->GetValue())
       {
-        m_associated_settings[i] = !m_associated_settings[i];
+        associated_settings[i] = !associated_settings[i];
 
-        if (m_associated_settings[i])
+        if (associated_settings[i])
           OSD::AddMessage(controls[i]->ui_name + ": on");
         else
           OSD::AddMessage(controls[i]->ui_name + ": off");
 
-        m_threshold_exceeded[i] = true;
+        threshold_exceeded[i] = true;
       }
 
-      if (!state)
-        m_threshold_exceeded[i] = false;
+      if (state < numeric_settings[0]->GetValue())
+        threshold_exceeded[i] = false;
     }
   }
 }
 
-const std::vector<bool>& ModifySettingsButton::IsSettingToggled() const
+const std::vector<bool>& ModifySettingsButton::isSettingToggled() const
 {
-  return m_associated_settings_toggle;
+  return associated_settings_toggle;
 }
 
-const std::vector<bool>& ModifySettingsButton::GetSettingsModifier() const
+const std::vector<bool>& ModifySettingsButton::getSettingsModifier() const
 {
-  return m_associated_settings;
+  return associated_settings;
 }
 }  // namespace ControllerEmu

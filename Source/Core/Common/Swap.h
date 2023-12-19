@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -12,11 +13,7 @@
 #include <byteswap.h>
 #elif defined(__FreeBSD__)
 #include <sys/endian.h>
-#elif defined(__OpenBSD__)
-#include <endian.h>
 #endif
-
-#include <fmt/format.h>
 
 #include "Common/CommonTypes.h"
 
@@ -167,33 +164,4 @@ inline T FromBigEndian(T data)
   swap<sizeof(data)>(reinterpret_cast<u8*>(&data));
   return data;
 }
-
-template <typename value_type>
-struct BigEndianValue
-{
-  static_assert(std::is_arithmetic<value_type>(), "value_type must be an arithmetic type");
-  BigEndianValue() = default;
-  explicit BigEndianValue(value_type val) { *this = val; }
-  operator value_type() const { return FromBigEndian(raw); }
-  BigEndianValue& operator=(value_type v)
-  {
-    raw = FromBigEndian(v);
-    return *this;
-  }
-
-private:
-  value_type raw;
-};
 }  // Namespace Common
-
-template <typename value_type>
-struct fmt::formatter<Common::BigEndianValue<value_type>>
-{
-  fmt::formatter<value_type> m_formatter;
-  constexpr auto parse(format_parse_context& ctx) { return m_formatter.parse(ctx); }
-  template <typename FormatContext>
-  auto format(const Common::BigEndianValue<value_type>& value, FormatContext& ctx) const
-  {
-    return m_formatter.format(value.operator value_type(), ctx);
-  }
-};

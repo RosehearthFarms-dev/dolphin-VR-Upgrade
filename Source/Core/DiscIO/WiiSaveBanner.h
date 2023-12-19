@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -21,7 +22,7 @@ public:
   std::string GetName() const;
   std::string GetDescription() const;
 
-  std::vector<u32> GetBanner(u32* width, u32* height) const;
+  std::vector<u32> GetBanner(int* width, int* height) const;
 
 private:
   struct Header
@@ -34,7 +35,7 @@ private:
     char16_t description[32];
   } m_header;
 
-  bool m_valid = true;
+  bool m_valid;
   std::string m_path;
 };
-}  // namespace DiscIO
+}

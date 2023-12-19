@@ -1,5 +1,6 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -18,7 +19,6 @@ public:
   WiimoteAndroid(int index);
   ~WiimoteAndroid() override;
   std::string GetId() const override { return "Android " + std::to_string(m_mayflash_index); }
-
 protected:
   bool ConnectInternal() override;
   void DisconnectInternal() override;
@@ -47,9 +47,8 @@ public:
   bool IsReady() const override { return true; }
   void FindWiimotes(std::vector<Wiimote*>&, Wiimote*&) override;
   void Update() override {}
-  void RequestStopSearching() override {}
 };
-}  // namespace WiimoteReal
+}
 
 #else
 #include "Core/HW/WiimoteReal/IODummy.h"

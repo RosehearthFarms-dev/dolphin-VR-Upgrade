@@ -33,9 +33,6 @@
 
 #include "hidapi.h"
 
-/* As defined in AppKit.h, but we don't need the entire AppKit for a single constant. */
-extern const double NSAppKitVersionNumber;
-
 /* Barrier implementation because Mac OSX doesn't have pthread_barrier.
    It also doesn't have clock_gettime(). So much for POSIX and SUSv2.
    This implementation came from Brent Priddy and was posted on
@@ -180,7 +177,6 @@ static void free_hid_device(hid_device *dev)
 }
 
 static	IOHIDManagerRef hid_mgr = 0x0;
-static	int is_macos_10_10_or_greater = 0;
 
 
 #if 0
@@ -219,11 +215,6 @@ static unsigned short get_product_id(IOHIDDeviceRef device)
 static int32_t get_location_id(IOHIDDeviceRef device)
 {
 	return get_int_property(device, CFSTR(kIOHIDLocationIDKey));
-}
-
-static int32_t get_unique_id(IOHIDDeviceRef device)
-{
-	return get_int_property(device, CFSTR(kIOHIDUniqueIDKey));
 }
 
 static int32_t get_max_report_length(IOHIDDeviceRef device)
@@ -346,7 +337,6 @@ static int make_path(IOHIDDeviceRef device, char *buf, size_t len)
 	unsigned short vid, pid;
 	char transport[32];
 	int32_t location;
-	int32_t unique_id;
 
 	buf[0] = '\0';
 
@@ -357,17 +347,12 @@ static int make_path(IOHIDDeviceRef device, char *buf, size_t len)
 	if (!res)
 		return -1;
 
-	unique_id = get_unique_id(device);
-	if (unique_id != 0) {
-		res = snprintf(buf, len, "id_%x", unique_id);
-	} else {
-		location = get_location_id(device);
-		vid = get_vendor_id(device);
-		pid = get_product_id(device);
+	location = get_location_id(device);
+	vid = get_vendor_id(device);
+	pid = get_product_id(device);
 
-		res = snprintf(buf, len, "%s_%04hx_%04hx_%x",
-	                       transport, vid, pid, location);
-	}
+	res = snprintf(buf, len, "%s_%04hx_%04hx_%x",
+                       transport, vid, pid, location);
 
 
 	buf[len-1] = '\0';
@@ -394,7 +379,6 @@ static int init_hid_manager(void)
 int HID_API_EXPORT hid_init(void)
 {
 	if (!hid_mgr) {
-		is_macos_10_10_or_greater = (NSAppKitVersionNumber >= 1343); /* NSAppKitVersionNumber10_10 */
 		return init_hid_manager();
 	}
 
@@ -567,10 +551,11 @@ hid_device * HID_API_EXPORT hid_open(unsigned short vendor_id, unsigned short pr
 static void hid_device_removal_callback(void *context, IOReturn result,
                                         void *sender)
 {
-	/* Stop the Run Loop for this device. This callback will always
-	   be called on the device's registered run loop, so we can just
-	   get the current loop. */		
-	CFRunLoopStop(CFRunLoopGetCurrent());
+	/* Stop the Run Loop for this device. */
+	hid_device *d = context;
+
+	d->disconnected = 1;
+	CFRunLoopStop(d->run_loop);
 }
 
 /* The Run Loop calls this function for each input report received.
@@ -662,7 +647,7 @@ static void *read_thread(void *param)
 	while (!dev->shutdown_thread && !dev->disconnected) {
 		code = CFRunLoopRunInMode(dev->run_loop_mode, 1000/*sec*/, FALSE);
 		/* Return if the device has been disconnected */
-		if (code == kCFRunLoopRunFinished || code == kCFRunLoopRunStopped) {
+		if (code == kCFRunLoopRunFinished) {
 			dev->disconnected = 1;
 			break;
 		}
@@ -777,10 +762,8 @@ static int set_report(hid_device *dev, IOHIDReportType type, const unsigned char
 	IOReturn res;
 
 	/* Return if the device has been disconnected. */
-	if (dev->disconnected) {
-		errno = ENODEV;
+	if (dev->disconnected)
 		return -1;
-	}
 
 	if (data[0] == 0x0) {
 		/* Not using numbered Reports.
@@ -803,14 +786,9 @@ static int set_report(hid_device *dev, IOHIDReportType type, const unsigned char
 
 		if (res == kIOReturnSuccess) {
 			return length;
-		} else if (res == (IOReturn)0xe0005000) {
-		  /* Kernel.framework's IOUSBHostFamily.h defines this error as kUSBHostReturnPipeStalled */
-			errno = EPIPE;
-			return -1;
-		} else {
-			errno = EBUSY;
-			return -1;
 		}
+		else
+			return -1;
 	}
 
 	return -1;
@@ -994,7 +972,7 @@ void HID_API_EXPORT hid_close(hid_device *dev)
 		return;
 
 	/* Disconnect the report callback before close. */
-	if (is_macos_10_10_or_greater || !dev->disconnected) {
+	if (!dev->disconnected) {
 		IOHIDDeviceRegisterInputReportCallback(
 			dev->device_handle, dev->input_report_buf, dev->max_input_report_len,
 			NULL, dev);
@@ -1018,14 +996,8 @@ void HID_API_EXPORT hid_close(hid_device *dev)
 
 	/* Close the OS handle to the device, but only if it's not
 	   been unplugged. If it's been unplugged, then calling
-	   IOHIDDeviceClose() will crash.
-
-	   UPD: The crash part was true in/until some version of macOS.
-	   Starting with macOS 10.15, there is an opposite effect in some environments:
-	   crash happenes if IOHIDDeviceClose() is not called.
-	   Not leaking a resource in all tested environments.
-	*/
-	if (is_macos_10_10_or_greater || !dev->disconnected) {
+	   IOHIDDeviceClose() will crash. */
+	if (!dev->disconnected) {
 		IOHIDDeviceClose(dev->device_handle, kIOHIDOptionsTypeSeizeDevice);
 	}
 

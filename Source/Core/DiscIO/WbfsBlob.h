@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -8,7 +9,7 @@
 #include <vector>
 
 #include "Common/CommonTypes.h"
-#include "Common/IOFile.h"
+#include "Common/File.h"
 #include "DiscIO/Blob.h"
 
 namespace DiscIO
@@ -23,21 +24,16 @@ public:
   static std::unique_ptr<WbfsFileReader> Create(File::IOFile file, const std::string& path);
 
   BlobType GetBlobType() const override { return BlobType::WBFS; }
-  std::unique_ptr<BlobReader> CopyReader() const override;
+  // The WBFS format does not save the original file size.
+  // This function returns a constant upper bound
+  // (the size of a double-layer Wii disc).
+  u64 GetDataSize() const override;
 
   u64 GetRawSize() const override { return m_size; }
-  u64 GetDataSize() const override;
-  DataSizeType GetDataSizeType() const override { return DataSizeType::UpperBound; }
-
-  u64 GetBlockSize() const override { return m_wbfs_sector_size; }
-  bool HasFastRandomAccessInBlock() const override { return true; }
-  std::string GetCompressionMethod() const override { return {}; }
-  std::optional<int> GetCompressionLevel() const override { return std::nullopt; }
-
   bool Read(u64 offset, u64 nbytes, u8* out_ptr) override;
 
 private:
-  WbfsFileReader(File::IOFile file, const std::string& path = "");
+  WbfsFileReader(File::IOFile file, const std::string& path);
 
   void OpenAdditionalFiles(const std::string& path);
   bool AddFileToList(File::IOFile file);
@@ -84,4 +80,4 @@ private:
   bool m_good;
 };
 
-}  // namespace DiscIO
+}  // namespace

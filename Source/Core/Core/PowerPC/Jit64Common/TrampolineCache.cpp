@@ -1,16 +1,17 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/PowerPC/Jit64Common/TrampolineCache.h"
 
+#include <cinttypes>
 #include <string>
 
 #include "Common/CommonTypes.h"
 #include "Common/JitRegister.h"
 #include "Common/MsgHandler.h"
 #include "Common/x64Emitter.h"
-#include "Core/PowerPC/Jit64/Jit.h"
-#include "Core/PowerPC/Jit64Common/Jit64Constants.h"
+#include "Core/PowerPC/Jit64Common/Jit64Base.h"
 #include "Core/PowerPC/Jit64Common/Jit64PowerPCState.h"
 #include "Core/PowerPC/Jit64Common/TrampolineInfo.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -39,34 +40,37 @@ const u8* TrampolineCache::GenerateTrampoline(const TrampolineInfo& info)
 const u8* TrampolineCache::GenerateReadTrampoline(const TrampolineInfo& info)
 {
   if (GetSpaceLeft() < 1024)
-    PanicAlertFmt("Trampoline cache full");
+    PanicAlert("Trampoline cache full");
 
   const u8* trampoline = GetCodePtr();
 
   SafeLoadToReg(info.op_reg, info.op_arg, info.accessSize << 3, info.offset, info.registersInUse,
-                info.signExtend, info.flags | SAFE_LOADSTORE_FORCE_SLOW_ACCESS);
+                info.signExtend, info.flags | SAFE_LOADSTORE_FORCE_SLOWMEM);
 
-  JMP(info.start + info.len, Jump::Near);
+  JMP(info.start + info.len, true);
 
-  Common::JitRegister::Register(trampoline, GetCodePtr(), "JIT_ReadTrampoline_{:x}", info.pc);
+  JitRegister::Register(trampoline, GetCodePtr(), "JIT_ReadTrampoline_%x", info.pc);
   return trampoline;
 }
 
 const u8* TrampolineCache::GenerateWriteTrampoline(const TrampolineInfo& info)
 {
   if (GetSpaceLeft() < 1024)
-    PanicAlertFmt("Trampoline cache full");
+    PanicAlert("Trampoline cache full");
 
   const u8* trampoline = GetCodePtr();
 
   // Don't treat FIFO writes specially for now because they require a burst
   // check anyway.
 
+  // PC is used by memory watchpoints (if enabled) or to print accurate PC locations in debug logs
+  MOV(32, PPCSTATE(pc), Imm32(info.pc));
+
   SafeWriteRegToReg(info.op_arg, info.op_reg, info.accessSize << 3, info.offset,
-                    info.registersInUse, info.flags | SAFE_LOADSTORE_FORCE_SLOW_ACCESS);
+                    info.registersInUse, info.flags | SAFE_LOADSTORE_FORCE_SLOWMEM);
 
-  JMP(info.start + info.len, Jump::Near);
+  JMP(info.start + info.len, true);
 
-  Common::JitRegister::Register(trampoline, GetCodePtr(), "JIT_WriteTrampoline_{:x}", info.pc);
+  JitRegister::Register(trampoline, GetCodePtr(), "JIT_WriteTrampoline_%x", info.pc);
   return trampoline;
 }

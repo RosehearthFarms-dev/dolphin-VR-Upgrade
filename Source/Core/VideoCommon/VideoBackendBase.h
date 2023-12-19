@@ -1,15 +1,15 @@
 // Copyright 2011 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <memory>
-#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "Common/CommonTypes.h"
-#include "Common/WindowSystemInfo.h"
 #include "VideoCommon/PerfQueryBase.h"
 
 namespace MMIO
@@ -17,12 +17,6 @@ namespace MMIO
 class Mapping;
 }
 class PointerWrap;
-
-class AbstractGfx;
-class BoundingBox;
-class Renderer;
-class TextureCacheBase;
-class VertexManagerBase;
 
 enum class FieldType
 {
@@ -42,57 +36,53 @@ class VideoBackendBase
 {
 public:
   virtual ~VideoBackendBase() {}
-  virtual bool Initialize(const WindowSystemInfo& wsi) = 0;
+  virtual unsigned int PeekMessages() = 0;
+
+  virtual bool Initialize(void* window_handle) = 0;
+  virtual bool InitializeOtherThread(void* window_handle, std::thread* video_thread) = 0;
   virtual void Shutdown() = 0;
+  virtual void ShutdownOtherThread() = 0;
 
   virtual std::string GetName() const = 0;
   virtual std::string GetDisplayName() const { return GetName(); }
-  virtual void InitBackendInfo(const WindowSystemInfo& wsi) = 0;
-  virtual std::optional<std::string> GetWarningMessage() const { return {}; }
+  void ShowConfig(void*);
+  virtual void InitBackendInfo() = 0;
 
-  // Prepares a native window for rendering. This is called on the main thread, or the
-  // thread which owns the window.
-  virtual void PrepareWindow(WindowSystemInfo& wsi) {}
-
-  static std::string BadShaderFilename(const char* shader_stage, int counter);
-
+  virtual void Video_Prepare() = 0;             // called from CPU-GPU thread or Video thread
+  virtual void Video_PrepareOtherThread() = 0;  // called from VR thread
   void Video_ExitLoop();
+  virtual void Video_AsyncTimewarpDraw();
+  virtual bool Video_CanDoAsync() { return false; };
+  virtual void Video_Cleanup() = 0;             // called from gl/d3d thread
+  virtual void Video_CleanupOtherThread() = 0;  // called from VR thread
 
-  void Video_OutputXFB(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height, u64 ticks);
+  void Video_BeginField(u32, u32, u32, u32, u64);
 
-  u32 Video_AccessEFB(EFBAccessType type, u32 x, u32 y, u32 data);
+  u32 Video_AccessEFB(EFBAccessType, u32, u32, u32);
   u32 Video_GetQueryResult(PerfQueryType type);
   u16 Video_GetBoundingBox(int index);
 
-  static std::string GetDefaultBackendName();
-  static const std::vector<std::unique_ptr<VideoBackendBase>>& GetAvailableBackends();
+  static void PopulateList();
+  static void ClearList();
   static void ActivateBackend(const std::string& name);
 
-  // Fills the backend_info fields with the capabilities of the selected backend/device.
-  static void PopulateBackendInfo(const WindowSystemInfo& wsi);
-  // Called by the UI thread when the graphics config is opened.
-  static void PopulateBackendInfoFromUI(const WindowSystemInfo& wsi);
-
-  // Wrapper function which pushes the event to the GPU thread.
+  // the implementation needs not do synchronization logic, because calls to it are surrounded by
+  // PauseAndLock now
   void DoState(PointerWrap& p);
 
-protected:
-  // For hardware backends
-  bool InitializeShared(std::unique_ptr<AbstractGfx> gfx,
-                        std::unique_ptr<VertexManagerBase> vertex_manager,
-                        std::unique_ptr<PerfQueryBase> perf_query,
-                        std::unique_ptr<BoundingBox> bounding_box);
+  void CheckInvalidState();
 
-  // For software and null backends. Allows overriding the default Renderer and Texture Cache
-  bool InitializeShared(std::unique_ptr<AbstractGfx> gfx,
-                        std::unique_ptr<VertexManagerBase> vertex_manager,
-                        std::unique_ptr<PerfQueryBase> perf_query,
-                        std::unique_ptr<BoundingBox> bounding_box,
-                        std::unique_ptr<Renderer> renderer,
-                        std::unique_ptr<TextureCacheBase> texture_cache);
+public:
+  std::thread* m_video_thread;
+
+protected:
+  void InitializeShared();
   void ShutdownShared();
+  void CleanupShared();
 
   bool m_initialized = false;
+  bool m_invalid = false;
 };
 
+extern std::vector<std::unique_ptr<VideoBackendBase>> g_available_video_backends;
 extern VideoBackendBase* g_video_backend;

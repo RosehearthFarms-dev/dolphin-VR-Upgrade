@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -8,7 +9,9 @@
 
 // Used by early USB interfaces, such as /dev/usb/oh0 (except in IOS57, 58, 59) and /dev/usb/oh1.
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
 {
 struct IOCtlVRequest;
 
@@ -38,22 +41,23 @@ enum V0Requests
 
 struct V0CtrlMessage final : CtrlMessage
 {
-  V0CtrlMessage(EmulationKernel& ios, const IOCtlVRequest& ioctlv);
+  V0CtrlMessage(Kernel& ios, const IOCtlVRequest& ioctlv);
 };
 
 struct V0BulkMessage final : BulkMessage
 {
-  V0BulkMessage(EmulationKernel& ios, const IOCtlVRequest& ioctlv, bool long_length = false);
+  V0BulkMessage(Kernel& ios, const IOCtlVRequest& ioctlv, bool long_length = false);
 };
 
 struct V0IntrMessage final : IntrMessage
 {
-  V0IntrMessage(EmulationKernel& ios, const IOCtlVRequest& ioctlv);
+  V0IntrMessage(Kernel& ios, const IOCtlVRequest& ioctlv);
 };
 
 struct V0IsoMessage final : IsoMessage
 {
-  V0IsoMessage(EmulationKernel& ios, const IOCtlVRequest& ioctlv);
+  V0IsoMessage(Kernel& ios, const IOCtlVRequest& ioctlv);
 };
 }  // namespace USB
-}  // namespace IOS::HLE
+}  // namespace HLE
+}  // namespace IOS

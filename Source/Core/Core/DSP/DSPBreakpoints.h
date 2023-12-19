@@ -1,5 +1,6 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -42,7 +43,6 @@ public:
 
   void Clear() { memset(b, 0, sizeof(b)); }
   void DeleteByAddress(u32 addr) { b[addr] = 0; }
-
 private:
   u8 b[65536];
 };

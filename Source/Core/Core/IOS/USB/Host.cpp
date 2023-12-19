@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/IOS/USB/Host.h"
 
@@ -19,49 +20,55 @@
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
 #include "Common/Thread.h"
-#include "Core/Config/MainSettings.h"
+#include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/IOS/USB/Common.h"
-#include "Core/IOS/USB/Emulated/Infinity.h"
-#include "Core/IOS/USB/Emulated/Skylanders/Skylander.h"
 #include "Core/IOS/USB/LibusbDevice.h"
-#include "Core/NetPlayProto.h"
-#include "Core/System.h"
 
-namespace IOS::HLE
+namespace IOS
 {
-USBHost::USBHost(EmulationKernel& ios, const std::string& device_name)
-    : EmulationDevice(ios, device_name)
+namespace HLE
 {
+namespace Device
+{
+USBHost::USBHost(Kernel& ios, const std::string& device_name) : Device(ios, device_name)
+{
+#ifdef __LIBUSB__
+  const int ret = libusb_init(&m_libusb_context);
+  _dbg_assert_msg_(IOS_USB, ret == 0, "Failed to init libusb for USB passthrough.");
+#endif
 }
 
-USBHost::~USBHost() = default;
-
-std::optional<IPCReply> USBHost::Open(const OpenRequest& request)
+USBHost::~USBHost()
 {
-  if (!m_has_initialised)
+#ifdef __LIBUSB__
+  if (m_libusb_context)
+    libusb_exit(m_libusb_context);
+#endif
+}
+
+ReturnCode USBHost::Open(const OpenRequest& request)
+{
+  // Force a device scan to complete, because some games (including Your Shape) only care
+  // about the initial device list (in the first GETDEVICECHANGE reply).
+  while (!UpdateDevices())
   {
-    GetScanThread().Start();
-    // Force a device scan to complete, because some games (including Your Shape) only care
-    // about the initial device list (in the first GETDEVICECHANGE reply).
-    GetScanThread().WaitForFirstScan();
-    m_has_initialised = true;
   }
-  return IPCReply(IPC_SUCCESS);
+  StartThreads();
+  return IPC_SUCCESS;
 }
 
 void USBHost::UpdateWantDeterminism(const bool new_want_determinism)
 {
   if (new_want_determinism)
-    GetScanThread().Stop();
+    StopThreads();
   else if (IsOpened())
-    GetScanThread().Start();
+    StartThreads();
 }
 
 void USBHost::DoState(PointerWrap& p)
 {
-  Device::DoState(p);
-  if (IsOpened() && p.IsReadMode())
+  if (IsOpened() && p.GetMode() == PointerWrap::MODE_READ)
   {
     // After a state has loaded, there may be insertion hooks for devices that were
     // already plugged in, and which need to be triggered.
@@ -71,7 +78,7 @@ void USBHost::DoState(PointerWrap& p)
 
 bool USBHost::AddDevice(std::unique_ptr<USB::Device> device)
 {
-  std::lock_guard lk(m_devices_mutex);
+  std::lock_guard<std::mutex> lk(m_devices_mutex);
   if (m_devices.find(device->GetId()) != m_devices.end())
     return false;
 
@@ -81,7 +88,7 @@ bool USBHost::AddDevice(std::unique_ptr<USB::Device> device)
 
 std::shared_ptr<USB::Device> USBHost::GetDeviceById(const u64 device_id) const
 {
-  std::lock_guard lk(m_devices_mutex);
+  std::lock_guard<std::mutex> lk(m_devices_mutex);
   const auto it = m_devices.find(device_id);
   if (it == m_devices.end())
     return nullptr;
@@ -101,15 +108,12 @@ bool USBHost::ShouldAddDevice(const USB::Device& device) const
   return true;
 }
 
-void USBHost::Update()
-{
-  if (Core::WantsDeterminism())
-    UpdateDevices();
-}
-
 // This is called from the scan thread. Returns false if we failed to update the device list.
 bool USBHost::UpdateDevices(const bool always_add_hooks)
 {
+  if (Core::WantsDeterminism())
+    return true;
+
   DeviceChangeHooks hooks;
   std::set<u64> plugged_devices;
   // If we failed to get a new, up-to-date list of devices, we cannot detect device removals.
@@ -123,30 +127,47 @@ bool USBHost::UpdateDevices(const bool always_add_hooks)
 bool USBHost::AddNewDevices(std::set<u64>& new_devices, DeviceChangeHooks& hooks,
                             const bool always_add_hooks)
 {
-  AddEmulatedDevices(new_devices, hooks, always_add_hooks);
 #ifdef __LIBUSB__
-  if (!Core::WantsDeterminism())
+  if (SConfig::GetInstance().m_usb_passthrough_devices.empty())
+    return true;
+
+  if (m_libusb_context)
   {
-    auto whitelist = Config::GetUSBDeviceWhitelist();
-    if (whitelist.empty())
-      return true;
-
-    if (m_context.IsValid())
+    libusb_device** list;
+    const ssize_t count = libusb_get_device_list(m_libusb_context, &list);
+    if (count < 0)
     {
-      const int ret = m_context.GetDeviceList([&](libusb_device* device) {
-        libusb_device_descriptor descriptor;
-        libusb_get_device_descriptor(device, &descriptor);
-        if (whitelist.count({descriptor.idVendor, descriptor.idProduct}) == 0)
-          return true;
-
-        auto usb_device =
-            std::make_unique<USB::LibusbDevice>(GetEmulationKernel(), device, descriptor);
-        CheckAndAddDevice(std::move(usb_device), new_devices, hooks, always_add_hooks);
-        return true;
-      });
-      if (ret != LIBUSB_SUCCESS)
-        WARN_LOG_FMT(IOS_USB, "GetDeviceList failed: {}", LibusbUtils::ErrorWrap(ret));
+      WARN_LOG(IOS_USB, "Failed to get device list: %s",
+               libusb_error_name(static_cast<int>(count)));
+      return false;
     }
+
+    for (ssize_t i = 0; i < count; ++i)
+    {
+      libusb_device* device = list[i];
+      libusb_device_descriptor descriptor;
+      libusb_get_device_descriptor(device, &descriptor);
+      if (!SConfig::GetInstance().IsUSBDeviceWhitelisted(
+              {descriptor.idVendor, descriptor.idProduct}))
+      {
+        libusb_unref_device(device);
+        continue;
+      }
+
+      auto usb_device = std::make_unique<USB::LibusbDevice>(m_ios, device, descriptor);
+      if (!ShouldAddDevice(*usb_device))
+      {
+        libusb_unref_device(device);
+        continue;
+      }
+      const u64 id = usb_device->GetId();
+      new_devices.insert(id);
+      if (AddDevice(std::move(usb_device)) || always_add_hooks)
+        hooks.emplace(GetDeviceById(id), ChangeEvent::Inserted);
+      else
+        libusb_unref_device(device);
+    }
+    libusb_free_device_list(list, 0);
   }
 #endif
   return true;
@@ -154,7 +175,7 @@ bool USBHost::AddNewDevices(std::set<u64>& new_devices, DeviceChangeHooks& hooks
 
 void USBHost::DetectRemovedDevices(const std::set<u64>& plugged_devices, DeviceChangeHooks& hooks)
 {
-  std::lock_guard lk(m_devices_mutex);
+  std::lock_guard<std::mutex> lk(m_devices_mutex);
   for (auto it = m_devices.begin(); it != m_devices.end();)
   {
     if (plugged_devices.find(it->second->GetId()) == plugged_devices.end())
@@ -173,102 +194,84 @@ void USBHost::DispatchHooks(const DeviceChangeHooks& hooks)
 {
   for (const auto& hook : hooks)
   {
-    INFO_LOG_FMT(IOS_USB, "{} - {} device: {:04x}:{:04x}", GetDeviceName(),
-                 hook.second == ChangeEvent::Inserted ? "New" : "Removed", hook.first->GetVid(),
-                 hook.first->GetPid());
+    INFO_LOG(IOS_USB, "%s - %s device: %04x:%04x", GetDeviceName().c_str(),
+             hook.second == ChangeEvent::Inserted ? "New" : "Removed", hook.first->GetVid(),
+             hook.first->GetPid());
     OnDeviceChange(hook.second, hook.first);
   }
   if (!hooks.empty())
     OnDeviceChangeEnd();
 }
 
-void USBHost::AddEmulatedDevices(std::set<u64>& new_devices, DeviceChangeHooks& hooks,
-                                 bool always_add_hooks)
-{
-  if (Config::Get(Config::MAIN_EMULATE_SKYLANDER_PORTAL) && !NetPlay::IsNetPlayRunning())
-  {
-    auto skylanderportal =
-        std::make_unique<USB::SkylanderUSB>(GetEmulationKernel(), "Skylander Portal");
-    CheckAndAddDevice(std::move(skylanderportal), new_devices, hooks, always_add_hooks);
-  }
-  if (Config::Get(Config::MAIN_EMULATE_INFINITY_BASE) && !NetPlay::IsNetPlayRunning())
-  {
-    auto infinity_base = std::make_unique<USB::InfinityUSB>(GetEmulationKernel(), "Infinity Base");
-    CheckAndAddDevice(std::move(infinity_base), new_devices, hooks, always_add_hooks);
-  }
-}
-
-void USBHost::CheckAndAddDevice(std::unique_ptr<USB::Device> device, std::set<u64>& new_devices,
-                                DeviceChangeHooks& hooks, bool always_add_hooks)
-{
-  if (ShouldAddDevice(*device))
-  {
-    const u64 deviceid = device->GetId();
-    new_devices.insert(deviceid);
-    if (AddDevice(std::move(device)) || always_add_hooks)
-    {
-      hooks.emplace(GetDeviceById(deviceid), ChangeEvent::Inserted);
-    }
-  }
-}
-
-USBHost::ScanThread::~ScanThread()
-{
-  Stop();
-}
-
-void USBHost::ScanThread::WaitForFirstScan()
-{
-  if (m_thread_running.IsSet())
-  {
-    m_first_scan_complete_event.Wait();
-  }
-}
-
-void USBHost::ScanThread::Start()
+void USBHost::StartThreads()
 {
   if (Core::WantsDeterminism())
-  {
-    m_host->UpdateDevices();
     return;
-  }
-  if (m_thread_running.TestAndSet())
+
+  if (!m_scan_thread_running.IsSet())
   {
-    m_thread = std::thread([this] {
+    m_scan_thread_running.Set();
+    m_scan_thread = std::thread([this] {
       Common::SetCurrentThreadName("USB Scan Thread");
-      while (m_thread_running.IsSet())
+      while (m_scan_thread_running.IsSet())
       {
-        if (m_host->UpdateDevices())
-          m_first_scan_complete_event.Set();
+        UpdateDevices();
         Common::SleepCurrentThread(50);
       }
     });
   }
+
+#ifdef __LIBUSB__
+  if (!m_event_thread_running.IsSet() && m_libusb_context)
+  {
+    m_event_thread_running.Set();
+    m_event_thread = std::thread([this] {
+      Common::SetCurrentThreadName("USB Passthrough Thread");
+      while (m_event_thread_running.IsSet())
+      {
+        if (SConfig::GetInstance().m_usb_passthrough_devices.empty())
+        {
+          Common::SleepCurrentThread(50);
+          continue;
+        }
+
+        static timeval tv = {0, 50000};
+        libusb_handle_events_timeout_completed(m_libusb_context, &tv, nullptr);
+      }
+    });
+  }
+#endif
 }
 
-void USBHost::ScanThread::Stop()
+void USBHost::StopThreads()
 {
-  if (m_thread_running.TestAndClear())
-    m_thread.join();
+  if (m_scan_thread_running.TestAndClear())
+    m_scan_thread.join();
 
   // Clear all devices and dispatch removal hooks.
   DeviceChangeHooks hooks;
-  m_host->DetectRemovedDevices(std::set<u64>(), hooks);
-  m_host->DispatchHooks(hooks);
+  DetectRemovedDevices(std::set<u64>(), hooks);
+  DispatchHooks(hooks);
+#ifdef __LIBUSB__
+  if (m_event_thread_running.TestAndClear())
+    m_event_thread.join();
+#endif
 }
 
-std::optional<IPCReply> USBHost::HandleTransfer(std::shared_ptr<USB::Device> device, u32 request,
-                                                std::function<s32()> submit) const
+IPCCommandResult USBHost::HandleTransfer(std::shared_ptr<USB::Device> device, u32 request,
+                                         std::function<s32()> submit) const
 {
   if (!device)
-    return IPCReply(IPC_ENOENT);
+    return GetDefaultReply(IPC_ENOENT);
 
   const s32 ret = submit();
   if (ret == IPC_SUCCESS)
-    return std::nullopt;
+    return GetNoReply();
 
-  ERROR_LOG_FMT(IOS_USB, "[{:04x}:{:04x}] Failed to submit transfer (request {}): {}",
-                device->GetVid(), device->GetPid(), request, device->GetErrorName(ret));
-  return IPCReply(ret <= 0 ? ret : IPC_EINVAL);
+  ERROR_LOG(IOS_USB, "[%04x:%04x] Failed to submit transfer (request %u): %s", device->GetVid(),
+            device->GetPid(), request, device->GetErrorName(ret).c_str());
+  return GetDefaultReply(ret <= 0 ? ret : IPC_EINVAL);
 }
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS

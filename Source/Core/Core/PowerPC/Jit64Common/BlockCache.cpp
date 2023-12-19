@@ -1,5 +1,6 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/PowerPC/Jit64Common/BlockCache.h"
 
@@ -14,10 +15,10 @@ JitBlockCache::JitBlockCache(JitBase& jit) : JitBaseBlockCache{jit}
 void JitBlockCache::WriteLinkBlock(const JitBlock::LinkData& source, const JitBlock* dest)
 {
   u8* location = source.exitPtrs;
-  const u8* address = dest ? dest->normalEntry : m_jit.GetAsmRoutines()->dispatcher_no_timing_check;
-  if (source.call)
+  const u8* address = dest ? dest->checkedEntry : m_jit.GetAsmRoutines()->dispatcher;
+  Gen::XEmitter emit(location);
+  if (*location == 0xE8)
   {
-    Gen::XEmitter emit(location, location + 5);
     emit.CALL(address);
   }
   else
@@ -25,55 +26,19 @@ void JitBlockCache::WriteLinkBlock(const JitBlock::LinkData& source, const JitBl
     // If we're going to link with the next block, there is no need
     // to emit JMP. So just NOP out the gap to the next block.
     // Support up to 3 additional bytes because of alignment.
-    s64 offset = address - location;
+    s64 offset = address - emit.GetCodePtr();
     if (offset > 0 && offset <= 5 + 3)
-    {
-      Gen::XEmitter emit(location, location + offset);
       emit.NOP(offset);
-    }
     else
-    {
-      Gen::XEmitter emit(location, location + 5);
-      emit.JMP(address, Gen::XEmitter::Jump::Near);
-    }
+      emit.JMP(address, true);
   }
 }
 
 void JitBlockCache::WriteDestroyBlock(const JitBlock& block)
 {
-  // Only clear the entry point as we might still be within this block.
-  Gen::XEmitter emit(block.normalEntry, block.normalEntry + 1);
+  // Only clear the entry points as we might still be within this block.
+  Gen::XEmitter emit(const_cast<u8*>(block.checkedEntry));
   emit.INT3();
-}
-
-void JitBlockCache::Init()
-{
-  JitBaseBlockCache::Init();
-  ClearRangesToFree();
-}
-
-void JitBlockCache::DestroyBlock(JitBlock& block)
-{
-  JitBaseBlockCache::DestroyBlock(block);
-
-  if (block.near_begin != block.near_end)
-    m_ranges_to_free_on_next_codegen_near.emplace_back(block.near_begin, block.near_end);
-  if (block.far_begin != block.far_end)
-    m_ranges_to_free_on_next_codegen_far.emplace_back(block.far_begin, block.far_end);
-}
-
-const std::vector<std::pair<u8*, u8*>>& JitBlockCache::GetRangesToFreeNear() const
-{
-  return m_ranges_to_free_on_next_codegen_near;
-}
-
-const std::vector<std::pair<u8*, u8*>>& JitBlockCache::GetRangesToFreeFar() const
-{
-  return m_ranges_to_free_on_next_codegen_far;
-}
-
-void JitBlockCache::ClearRangesToFree()
-{
-  m_ranges_to_free_on_next_codegen_near.clear();
-  m_ranges_to_free_on_next_codegen_far.clear();
+  Gen::XEmitter emit2(const_cast<u8*>(block.normalEntry));
+  emit2.INT3();
 }

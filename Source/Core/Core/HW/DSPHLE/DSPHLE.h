@@ -1,5 +1,6 @@
 // Copyright 2011 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -12,7 +13,9 @@
 
 class PointerWrap;
 
-namespace DSP::HLE
+namespace DSP
+{
+namespace HLE
 {
 class UCodeInterface;
 
@@ -24,9 +27,9 @@ public:
 
   bool Initialize(bool wii, bool dsp_thread) override;
   void Shutdown() override;
-  bool IsLLE() const override { return false; }
+  bool IsLLE() override { return false; }
   void DoState(PointerWrap& p) override;
-  void PauseAndLock(bool do_lock) override;
+  void PauseAndLock(bool do_lock, bool unpause_on_unlock = true) override;
 
   void DSP_WriteMailBoxHigh(bool cpu_mailbox, u16 value) override;
   void DSP_WriteMailBoxLow(bool cpu_mailbox, u16 value) override;
@@ -65,7 +68,10 @@ private:
   std::unique_ptr<UCodeInterface> m_last_ucode;
 
   DSP::UDSPControl m_dsp_control;
-  u64 m_control_reg_init_code_clear_time = 0;
   CMailHandler m_mail_handler;
+
+  bool m_halt;
+  bool m_assert_interrupt;
 };
-}  // namespace DSP::HLE
+}  // namespace HLE
+}  // namespace DSP

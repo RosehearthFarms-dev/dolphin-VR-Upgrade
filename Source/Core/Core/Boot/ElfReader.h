@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -27,7 +28,7 @@ class ElfReader final : public BootExecutableReader
 public:
   explicit ElfReader(const std::string& filename);
   explicit ElfReader(File::IOFile file);
-  explicit ElfReader(std::vector<u8> buffer);
+  explicit ElfReader(const std::vector<u8>& buffer);
   ~ElfReader();
   u32 Read32(int off) const { return base32[off >> 2]; }
   // Quick accessors
@@ -35,8 +36,8 @@ public:
   ElfMachine GetMachine() const { return (ElfMachine)(header->e_machine); }
   u32 GetEntryPoint() const override { return entryPoint; }
   u32 GetFlags() const { return (u32)(header->e_flags); }
-  bool LoadIntoMemory(Core::System& system, bool only_in_mem1 = false) const override;
-  bool LoadSymbols(const Core::CPUThreadGuard& guard) const override;
+  bool LoadIntoMemory(bool only_in_mem1 = false) const override;
+  bool LoadSymbols() const override;
   // TODO: actually check for validity.
   bool IsValid() const override { return true; }
   bool IsWii() const override;
@@ -62,7 +63,6 @@ public:
   SectionID GetSectionByName(const char* name, int firstSection = 0) const;  //-1 for not found
 
   bool DidRelocate() const { return bRelocate; }
-
 private:
   void Initialize(u8* bytes);
 

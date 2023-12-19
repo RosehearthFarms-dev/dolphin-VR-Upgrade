@@ -1,5 +1,6 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -10,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include "Common/CommonTypes.h"
 #include "Common/Flag.h"
@@ -18,14 +20,16 @@
 #include "Core/IOS/USB/Bluetooth/BTBase.h"
 #include "Core/IOS/USB/Bluetooth/hci.h"
 #include "Core/IOS/USB/USBV0.h"
-#include "Core/LibusbUtils.h"
 
 class PointerWrap;
+struct libusb_context;
 struct libusb_device;
 struct libusb_device_handle;
 struct libusb_transfer;
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
 {
 enum class SyncButtonState
 {
@@ -39,15 +43,17 @@ enum class SyncButtonState
 
 using linkkey_t = std::array<u8, 16>;
 
-class BluetoothRealDevice final : public BluetoothBaseDevice
+namespace Device
+{
+class BluetoothReal final : public BluetoothBase
 {
 public:
-  BluetoothRealDevice(EmulationKernel& ios, const std::string& device_name);
-  ~BluetoothRealDevice() override;
+  BluetoothReal(Kernel& ios, const std::string& device_name);
+  ~BluetoothReal() override;
 
-  std::optional<IPCReply> Open(const OpenRequest& request) override;
-  std::optional<IPCReply> Close(u32 fd) override;
-  std::optional<IPCReply> IOCtlV(const IOCtlVRequest& request) override;
+  ReturnCode Open(const OpenRequest& request) override;
+  ReturnCode Close(u32 fd) override;
+  IPCCommandResult IOCtlV(const IOCtlVRequest& request) override;
 
   void DoState(PointerWrap& p) override;
   void UpdateSyncButtonState(bool is_held) override;
@@ -62,17 +68,18 @@ private:
   // Arbitrarily chosen value that allows emulated software to send commands often enough
   // so that the sync button event is triggered at least every 200ms.
   // Ideally this should be equal to 0, so we don't trigger unnecessary libusb transfers.
-  static constexpr u32 TIMEOUT = 200;
-  static constexpr u32 SYNC_BUTTON_HOLD_MS_TO_RESET = 10000;
+  static constexpr int TIMEOUT = 200;
+  static constexpr int SYNC_BUTTON_HOLD_MS_TO_RESET = 10000;
 
   std::atomic<SyncButtonState> m_sync_button_state{SyncButtonState::Unpressed};
   Common::Timer m_sync_button_held_timer;
 
-  std::string m_last_open_error;
-
-  LibusbUtils::Context m_context;
   libusb_device* m_device = nullptr;
   libusb_device_handle* m_handle = nullptr;
+  libusb_context* m_libusb_context = nullptr;
+
+  Common::Flag m_thread_running;
+  std::thread m_thread;
 
   std::mutex m_transfers_mutex;
   struct PendingTransfer
@@ -117,14 +124,25 @@ private:
   void SaveLinkKeys();
 
   bool OpenDevice(libusb_device* device);
+  void StartTransferThread();
+  void StopTransferThread();
+  void TransferThread();
 };
-}  // namespace IOS::HLE
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS
 
 #else
 #include "Core/IOS/USB/Bluetooth/BTStub.h"
 
-namespace IOS::HLE
+namespace IOS
 {
-using BluetoothRealDevice = BluetoothStubDevice;
-}  // namespace IOS::HLE
+namespace HLE
+{
+namespace Device
+{
+using BluetoothReal = BluetoothStub;
+}  // namespace Device
+}  // namespace HLE
+}  // namespace IOS
 #endif

@@ -1,11 +1,10 @@
 // Copyright 2013 Max Eliaser
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // See XInput2.cpp for extensive documentation.
 
 #pragma once
-
-#include <array>
 
 extern "C" {
 #include <X11/Xlib.h>
@@ -13,11 +12,11 @@ extern "C" {
 #include <X11/keysym.h>
 }
 
-#include "Common/CommonTypes.h"
-#include "Common/Matrix.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 
-namespace ciface::XInput2
+namespace ciface
+{
+namespace XInput2
 {
 void PopulateDevices(void* const hwnd);
 
@@ -26,11 +25,12 @@ class KeyboardMouse : public Core::Device
 private:
   struct State
   {
-    std::array<char, 32> keyboard;
-    u32 buttons;
-    Common::Vec2 cursor;
-    Common::Vec3 axis;
-    Common::Vec3 relative_mouse;
+    char keyboard[32];
+    unsigned int buttons;
+    struct
+    {
+      float x, y;
+    } cursor, axis;
   };
 
   class Key : public Input
@@ -53,11 +53,11 @@ private:
   {
   public:
     std::string GetName() const override { return name; }
-    Button(unsigned int index, u32* buttons);
+    Button(unsigned int index, unsigned int* buttons);
     ControlState GetState() const override;
 
   private:
-    const u32* m_buttons;
+    const unsigned int* m_buttons;
     const unsigned int m_index;
     std::string name;
   };
@@ -66,7 +66,7 @@ private:
   {
   public:
     std::string GetName() const override { return name; }
-    bool IsDetectable() const override { return false; }
+    bool IsDetectable() override { return false; }
     Cursor(u8 index, bool positive, const float* cursor);
     ControlState GetState() const override;
 
@@ -81,7 +81,7 @@ private:
   {
   public:
     std::string GetName() const override { return name; }
-    bool IsDetectable() const override { return false; }
+    bool IsDetectable() override { return false; }
     Axis(u8 index, bool positive, const float* axis);
     ControlState GetState() const override;
 
@@ -92,29 +92,14 @@ private:
     std::string name;
   };
 
-  class RelativeMouse : public Input
-  {
-  public:
-    std::string GetName() const override { return name; }
-    bool IsDetectable() const override { return false; }
-    RelativeMouse(u8 index, bool positive, const float* axis);
-    ControlState GetState() const override;
-
-  private:
-    const float* m_axis;
-    const u8 m_index;
-    const bool m_positive;
-    std::string name;
-  };
-
 private:
-  void UpdateCursor(bool should_center_mouse);
+  void SelectEventsForDevice(Window window, XIEventMask* mask, int deviceid);
+  void UpdateCursor();
 
 public:
   void UpdateInput() override;
 
-  KeyboardMouse(Window window, int opcode, int pointer_deviceid, int keyboard_deviceid,
-                double scroll_increment);
+  KeyboardMouse(Window window, int opcode, int pointer_deviceid, int keyboard_deviceid);
   ~KeyboardMouse();
 
   std::string GetName() const override;
@@ -123,11 +108,10 @@ public:
 private:
   Window m_window;
   Display* m_display;
-  State m_state{};
-  const int xi_opcode;
-  const int pointer_deviceid;
-  const int keyboard_deviceid;
-  const double scroll_increment;
+  State m_state;
+  int xi_opcode;
+  const int pointer_deviceid, keyboard_deviceid;
   std::string name;
 };
-}  // namespace ciface::XInput2
+}
+}

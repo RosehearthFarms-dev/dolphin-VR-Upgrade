@@ -1,17 +1,20 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "VideoBackends/Software/SetupUnit.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <cstring>
 
+#include "VideoBackends/Software/SetupUnit.h"
+
 #include "Common/Logging/Log.h"
+
 #include "VideoBackends/Software/Clipper.h"
+
 #include "VideoCommon/OpcodeDecoding.h"
 
-void SetupUnit::Init(OpcodeDecoder::Primitive primitive_type)
+void SetupUnit::Init(u8 primitiveType)
 {
-  m_PrimType = primitive_type;
+  m_PrimType = primitiveType;
 
   m_VertexCounter = 0;
   m_VertPointer[0] = &m_Vertices[0];
@@ -22,38 +25,37 @@ void SetupUnit::Init(OpcodeDecoder::Primitive primitive_type)
 
 OutputVertexData* SetupUnit::GetVertex()
 {
-  memset(reinterpret_cast<u8*>(m_VertWritePointer), 0, sizeof(*m_VertWritePointer));
+  memset(m_VertWritePointer, 0, sizeof(*m_VertWritePointer));
   return m_VertWritePointer;
 }
 
 void SetupUnit::SetupVertex()
 {
-  using OpcodeDecoder::Primitive;
   switch (m_PrimType)
   {
-  case Primitive::GX_DRAW_QUADS:
+  case OpcodeDecoder::GX_DRAW_QUADS:
     SetupQuad();
     break;
-  case Primitive::GX_DRAW_QUADS_2:
-    WARN_LOG_FMT(VIDEO, "Non-standard primitive drawing command GL_DRAW_QUADS_2");
+  case OpcodeDecoder::GX_DRAW_QUADS_2:
+    WARN_LOG(VIDEO, "Non-standard primitive drawing command GL_DRAW_QUADS_2");
     SetupQuad();
     break;
-  case Primitive::GX_DRAW_TRIANGLES:
+  case OpcodeDecoder::GX_DRAW_TRIANGLES:
     SetupTriangle();
     break;
-  case Primitive::GX_DRAW_TRIANGLE_STRIP:
+  case OpcodeDecoder::GX_DRAW_TRIANGLE_STRIP:
     SetupTriStrip();
     break;
-  case Primitive::GX_DRAW_TRIANGLE_FAN:
+  case OpcodeDecoder::GX_DRAW_TRIANGLE_FAN:
     SetupTriFan();
     break;
-  case Primitive::GX_DRAW_LINES:
+  case OpcodeDecoder::GX_DRAW_LINES:
     SetupLine();
     break;
-  case Primitive::GX_DRAW_LINE_STRIP:
+  case OpcodeDecoder::GX_DRAW_LINE_STRIP:
     SetupLineStrip();
     break;
-  case Primitive::GX_DRAW_POINTS:
+  case OpcodeDecoder::GX_DRAW_POINTS:
     SetupPoint();
     break;
   }
@@ -165,5 +167,4 @@ void SetupUnit::SetupLineStrip()
 
 void SetupUnit::SetupPoint()
 {
-  Clipper::ProcessPoint(m_VertPointer[0]);
 }

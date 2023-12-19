@@ -1,5 +1,6 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -13,8 +14,8 @@ namespace Vulkan
 class StagingBuffer
 {
 public:
-  StagingBuffer(STAGING_BUFFER_TYPE type, VkBuffer buffer, VmaAllocation allocation,
-                VkDeviceSize size, char* map_ptr);
+  StagingBuffer(STAGING_BUFFER_TYPE type, VkBuffer buffer, VkDeviceMemory memory, VkDeviceSize size,
+                bool coherent);
   virtual ~StagingBuffer();
 
   STAGING_BUFFER_TYPE GetType() const { return m_type; }
@@ -23,7 +24,9 @@ public:
   bool IsMapped() const { return m_map_pointer != nullptr; }
   const char* GetMapPointer() const { return m_map_pointer; }
   char* GetMapPointer() { return m_map_pointer; }
-  bool Map();
+  VkDeviceSize GetMapOffset() const { return m_map_offset; }
+  VkDeviceSize GetMapSize() const { return m_map_size; }
+  bool Map(VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE);
   void Unmap();
 
   // Upload part 1: Prepare from device read from the CPU side
@@ -56,23 +59,19 @@ public:
   static std::unique_ptr<StagingBuffer> Create(STAGING_BUFFER_TYPE type, VkDeviceSize size,
                                                VkBufferUsageFlags usage);
 
+protected:
   // Allocates the resources needed to create a staging buffer.
   static bool AllocateBuffer(STAGING_BUFFER_TYPE type, VkDeviceSize size, VkBufferUsageFlags usage,
-                             VkBuffer* out_buffer, VmaAllocation* out_alloc, char** out_map_ptr);
+                             VkBuffer* out_buffer, VkDeviceMemory* out_memory, bool* out_coherent);
 
-  // Wrapper for creating an barrier on a buffer
-  static void BufferMemoryBarrier(VkCommandBuffer command_buffer, VkBuffer buffer,
-                                  VkAccessFlags src_access_mask, VkAccessFlags dst_access_mask,
-                                  VkDeviceSize offset, VkDeviceSize size,
-                                  VkPipelineStageFlags src_stage_mask,
-                                  VkPipelineStageFlags dst_stage_mask);
-
-protected:
   STAGING_BUFFER_TYPE m_type;
   VkBuffer m_buffer;
-  VmaAllocation m_alloc;
+  VkDeviceMemory m_memory;
   VkDeviceSize m_size;
+  bool m_coherent;
 
   char* m_map_pointer = nullptr;
+  VkDeviceSize m_map_offset = 0;
+  VkDeviceSize m_map_size = 0;
 };
-}  // namespace Vulkan
+}

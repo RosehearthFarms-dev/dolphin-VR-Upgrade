@@ -1,15 +1,22 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <cstddef>
 #include "Common/x64Emitter.h"
 
+#if defined(_MSC_VER) && _MSC_VER <= 1800
+#define CONSTEXPR(datatype, name, value)                                                           \
+  enum name##_enum : datatype { name = value }
+#else
+#define CONSTEXPR(datatype, name, value) constexpr datatype name = value
+#endif
 // a bit of a hack; the MMU results in a vast amount more code ending up in the far cache,
 // mostly exception handling, so give it a whole bunch more space if the MMU is on.
-constexpr size_t FARCODE_SIZE = 1024 * 1024 * 64;
-constexpr size_t FARCODE_SIZE_MMU = 1024 * 1024 * 128;
+CONSTEXPR(size_t, FARCODE_SIZE, 1024 * 1024 * 8);
+CONSTEXPR(size_t, FARCODE_SIZE_MMU, 1024 * 1024 * 48);
 
 // A place to throw blocks of code we don't want polluting the cache, e.g. rarely taken
 // exception branches.

@@ -1,5 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -13,11 +14,7 @@
 class CachedInterpreter : public JitBase
 {
 public:
-  explicit CachedInterpreter(Core::System& system);
-  CachedInterpreter(const CachedInterpreter&) = delete;
-  CachedInterpreter(CachedInterpreter&&) = delete;
-  CachedInterpreter& operator=(const CachedInterpreter&) = delete;
-  CachedInterpreter& operator=(CachedInterpreter&&) = delete;
+  CachedInterpreter();
   ~CachedInterpreter();
 
   void Init() override;
@@ -32,30 +29,15 @@ public:
   void Jit(u32 address) override;
 
   JitBaseBlockCache* GetBlockCache() override { return &m_block_cache; }
-  const char* GetName() const override { return "Cached Interpreter"; }
+  const char* GetName() override { return "Cached Interpreter"; }
   const CommonAsmRoutinesBase* GetAsmRoutines() override { return nullptr; }
-
 private:
   struct Instruction;
 
-  u8* GetCodePtr();
+  const u8* GetCodePtr() const;
   void ExecuteOneBlock();
-
-  bool HandleFunctionHooking(u32 address);
-
-  static void EndBlock(CachedInterpreter& cached_interpreter, UGeckoInstruction data);
-  static void UpdateNumLoadStoreInstructions(CachedInterpreter& cached_interpreter,
-                                             UGeckoInstruction data);
-  static void UpdateNumFloatingPointInstructions(CachedInterpreter& cached_interpreter,
-                                                 UGeckoInstruction data);
-  static void WritePC(CachedInterpreter& cached_interpreter, UGeckoInstruction data);
-  static void WriteBrokenBlockNPC(CachedInterpreter& cached_interpreter, UGeckoInstruction data);
-  static bool CheckFPU(CachedInterpreter& cached_interpreter, u32 data);
-  static bool CheckDSI(CachedInterpreter& cached_interpreter, u32 data);
-  static bool CheckProgramException(CachedInterpreter& cached_interpreter, u32 data);
-  static bool CheckBreakpoint(CachedInterpreter& cached_interpreter, u32 data);
-  static bool CheckIdle(CachedInterpreter& cached_interpreter, u32 idle_pc);
 
   BlockCache m_block_cache{*this};
   std::vector<Instruction> m_code;
+  PPCAnalyst::CodeBuffer code_buffer;
 };

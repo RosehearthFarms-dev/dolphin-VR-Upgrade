@@ -1,5 +1,6 @@
 // Copyright 2011 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // File description
 // -------------
@@ -20,214 +21,455 @@
 #include <algorithm>
 #include <array>
 #include <string>
-
-#include <fmt/format.h>
+#include <vector>
 
 #include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
 #include "Common/FileUtil.h"
 #include "Common/IniFile.h"
 #include "Common/Logging/Log.h"
+#include "Common/MsgHandler.h"
+#include "Common/StringUtil.h"
 
-#include "Core/AchievementManager.h"
+#include "Common/Config/Config.h"
 #include "Core/Boot/Boot.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Config/SYSCONFSettings.h"
 #include "Core/ConfigLoaders/BaseConfigLoader.h"
+#include "Core/ConfigLoaders/GameConfigLoader.h"
+#include "Core/ConfigLoaders/MovieConfigLoader.h"
 #include "Core/ConfigLoaders/NetPlayConfigLoader.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HW/EXI/EXI.h"
 #include "Core/HW/SI/SI.h"
-#include "Core/HW/SI/SI_Device.h"
 #include "Core/HW/Sram.h"
 #include "Core/HW/WiimoteReal/WiimoteReal.h"
 #include "Core/Movie.h"
 #include "Core/NetPlayProto.h"
-#include "Core/PowerPC/PowerPC.h"
-#include "Core/System.h"
-#include "Core/WiiRoot.h"
 
 #include "DiscIO/Enums.h"
 
+#include "VideoCommon/VR.h"
 #include "VideoCommon/VideoBackendBase.h"
 
 namespace BootManager
 {
+// TODO this is an ugly hack which allows us to restore values trampled by per-game settings
+// Apply fire liberally
+struct ConfigCache
+{
+public:
+  // fill the cache with values from the configuration
+  void SaveConfig(const SConfig& config);
+  // restore values to the configuration from the cache
+  void RestoreConfig(SConfig* config);
+
+  // These store if the relevant setting should be reset back later (true) or if it should be left
+  // alone on restore (false)
+  bool bSetEmulationSpeed;
+  bool bSetVolume;
+  bool bSetFrameSkip;
+  std::array<bool, MAX_BBMOTES> bSetWiimoteSource;
+  std::array<bool, SerialInterface::MAX_SI_CHANNELS> bSetPads;
+  std::array<bool, ExpansionInterface::MAX_EXI_CHANNELS> bSetEXIDevice;
+
+private:
+  bool valid;
+  bool bCPUThread;
+  bool bEnableCheats;
+  bool bSkipIdle;
+  bool bSyncGPUOnSkipIdleHack;
+  bool bFPRF;
+  bool bAccurateNaNs;
+  bool bMMU;
+  bool bDCBZOFF;
+  bool bLowDCBZHack;
+  bool m_EnableJIT;
+  bool bSyncGPU;
+  bool bFastDiscSpeed;
+  bool bDSPHLE;
+  bool bHLE_BS2;
+  int iSelectedLanguage;
+  int iCPUCore;
+  int Volume;
+  unsigned int frameSkip;
+  float m_EmulationSpeed;
+  float m_OCFactor;
+  bool m_OCEnable;
+  std::string strBackend;
+  std::string sBackend;
+  std::string m_strGPUDeterminismMode;
+  std::array<int, MAX_BBMOTES> iWiimoteSource;
+  std::array<SerialInterface::SIDevices, SerialInterface::MAX_SI_CHANNELS> Pads;
+  std::array<ExpansionInterface::TEXIDevices, ExpansionInterface::MAX_EXI_CHANNELS> m_EXIDevice;
+};
+
+void ConfigCache::SaveConfig(const SConfig& config)
+{
+  valid = true;
+
+  bCPUThread = config.bCPUThread;
+  bEnableCheats = config.bEnableCheats;
+  bSkipIdle = config.bSkipIdle;
+  bSyncGPUOnSkipIdleHack = config.bSyncGPUOnSkipIdleHack;
+  bFPRF = config.bFPRF;
+  bAccurateNaNs = config.bAccurateNaNs;
+  bMMU = config.bMMU;
+  bDCBZOFF = config.bDCBZOFF;
+  m_EnableJIT = config.m_DSPEnableJIT;
+  bSyncGPU = config.bSyncGPU;
+  bFastDiscSpeed = config.bFastDiscSpeed;
+  bDSPHLE = config.bDSPHLE;
+  bHLE_BS2 = config.bHLE_BS2;
+  iSelectedLanguage = config.SelectedLanguage;
+  iCPUCore = config.iCPUCore;
+  Volume = config.m_Volume;
+  m_EmulationSpeed = config.m_EmulationSpeed;
+  frameSkip = config.m_FrameSkip;
+  strBackend = config.m_strVideoBackend;
+  sBackend = config.sBackend;
+  m_strGPUDeterminismMode = config.m_strGPUDeterminismMode;
+  m_OCFactor = config.m_OCFactor;
+  m_OCEnable = config.m_OCEnable;
+
+  std::copy(std::begin(g_wiimote_sources), std::end(g_wiimote_sources), std::begin(iWiimoteSource));
+  std::copy(std::begin(config.m_SIDevice), std::end(config.m_SIDevice), std::begin(Pads));
+  std::copy(std::begin(config.m_EXIDevice), std::end(config.m_EXIDevice), std::begin(m_EXIDevice));
+
+  bSetEmulationSpeed = false;
+  bSetVolume = false;
+  bSetFrameSkip = false;
+  bSetWiimoteSource.fill(false);
+  bSetPads.fill(false);
+  bSetEXIDevice.fill(false);
+}
+
+void ConfigCache::RestoreConfig(SConfig* config)
+{
+  if (!valid)
+    return;
+
+  valid = false;
+
+  config->bCPUThread = bCPUThread;
+  config->bEnableCheats = bEnableCheats;
+  config->bSkipIdle = bSkipIdle;
+  config->bSyncGPUOnSkipIdleHack = bSyncGPUOnSkipIdleHack;
+  config->bFPRF = bFPRF;
+  config->bAccurateNaNs = bAccurateNaNs;
+  config->bMMU = bMMU;
+  config->bDCBZOFF = bDCBZOFF;
+  config->bLowDCBZHack = bLowDCBZHack;
+  config->m_DSPEnableJIT = m_EnableJIT;
+  config->bSyncGPU = bSyncGPU;
+  config->bFastDiscSpeed = bFastDiscSpeed;
+  config->bDSPHLE = bDSPHLE;
+  config->bHLE_BS2 = bHLE_BS2;
+  config->SelectedLanguage = iSelectedLanguage;
+  config->iCPUCore = iCPUCore;
+
+  // Only change these back if they were actually set by game ini, since they can be changed while a
+  // game is running.
+  if (bSetVolume)
+    config->m_Volume = Volume;
+
+  if (config->bWii)
+  {
+    for (unsigned int i = 0; i < MAX_BBMOTES; ++i)
+    {
+      if (bSetWiimoteSource[i])
+      {
+        g_wiimote_sources[i] = iWiimoteSource[i];
+        WiimoteReal::ChangeWiimoteSource(i, iWiimoteSource[i]);
+      }
+    }
+  }
+
+  for (unsigned int i = 0; i < SerialInterface::MAX_SI_CHANNELS; ++i)
+  {
+    if (bSetPads[i])
+      config->m_SIDevice[i] = Pads[i];
+  }
+
+  if (bSetEmulationSpeed)
+    config->m_EmulationSpeed = m_EmulationSpeed;
+
+  if (bSetFrameSkip)
+  {
+    config->m_FrameSkip = frameSkip;
+    Movie::SetFrameSkipping(frameSkip);
+  }
+
+  for (unsigned int i = 0; i < ExpansionInterface::MAX_EXI_CHANNELS; ++i)
+  {
+    if (bSetEXIDevice[i])
+      config->m_EXIDevice[i] = m_EXIDevice[i];
+  }
+
+  config->m_strVideoBackend = strBackend;
+  config->sBackend = sBackend;
+  config->m_strGPUDeterminismMode = m_strGPUDeterminismMode;
+  config->m_OCFactor = m_OCFactor;
+  config->m_OCEnable = m_OCEnable;
+  VideoBackendBase::ActivateBackend(config->m_strVideoBackend);
+}
+
+static ConfigCache config_cache;
+
 // Boot the ISO or file
-bool BootCore(std::unique_ptr<BootParameters> boot, const WindowSystemInfo& wsi)
+bool BootCore(std::unique_ptr<BootParameters> boot)
 {
   if (!boot)
     return false;
 
   SConfig& StartUp = SConfig::GetInstance();
 
+  StartUp.bRunCompareClient = false;
+  StartUp.bRunCompareServer = false;
+
+  config_cache.SaveConfig(StartUp);
+
   if (!StartUp.SetPathsAndGameMetadata(*boot))
     return false;
+
+  // Load game specific settings
+  if (!std::holds_alternative<BootParameters::IPL>(boot->parameters))
+  {
+    IniFile game_ini = StartUp.LoadGameIni();
+
+    // General settings
+    IniFile::Section* core_section = game_ini.GetOrCreateSection("Core");
+    IniFile::Section* core_section_vr = game_ini.GetOrCreateSection("Core_VR");
+    IniFile::Section* dsp_section = game_ini.GetOrCreateSection("DSP");
+    IniFile::Section* controls_section = game_ini.GetOrCreateSection("Controls");
+
+    core_section->Get("CPUThread", &StartUp.bCPUThread, StartUp.bCPUThread);
+    core_section->Get("EnableCheats", &StartUp.bEnableCheats, StartUp.bEnableCheats);
+    core_section->Get("SkipIdle", &StartUp.bSkipIdle, StartUp.bSkipIdle);
+    if (g_has_hmd)
+      core_section_vr->Get("SkipIdle", &StartUp.bSkipIdle, StartUp.bSkipIdle);
+    // Needed for Virtual Reality Opcode Replay.  Some games need it true, some need it false.
+    core_section->Get("SyncOnSkipIdle", &StartUp.bSyncGPUOnSkipIdleHack,
+                      StartUp.bSyncGPUOnSkipIdleHack);
+    if (g_has_hmd)
+      core_section_vr->Get("SyncOnSkipIdle", &StartUp.bSyncGPUOnSkipIdleHack,
+                           StartUp.bSyncGPUOnSkipIdleHack);
+    core_section->Get("SyncOnSkipIdle", &StartUp.bSyncGPUOnSkipIdleHack,
+                      StartUp.bSyncGPUOnSkipIdleHack);
+    core_section->Get("FPRF", &StartUp.bFPRF, StartUp.bFPRF);
+    core_section->Get("AccurateNaNs", &StartUp.bAccurateNaNs, StartUp.bAccurateNaNs);
+    core_section->Get("MMU", &StartUp.bMMU, StartUp.bMMU);
+    core_section->Get("DCBZ", &StartUp.bDCBZOFF, StartUp.bDCBZOFF);
+    core_section->Get("LowDCBZHack", &StartUp.bLowDCBZHack, StartUp.bLowDCBZHack);
+    core_section->Get("SyncGPU", &StartUp.bSyncGPU, StartUp.bSyncGPU);
+    core_section->Get("FastDiscSpeed", &StartUp.bFastDiscSpeed, StartUp.bFastDiscSpeed);
+    core_section->Get("DSPHLE", &StartUp.bDSPHLE, StartUp.bDSPHLE);
+    core_section->Get("GFXBackend", &StartUp.m_strVideoBackend, StartUp.m_strVideoBackend);
+    core_section->Get("CPUCore", &StartUp.iCPUCore, StartUp.iCPUCore);
+    core_section->Get("HLE_BS2", &StartUp.bHLE_BS2, StartUp.bHLE_BS2);
+    core_section->Get("GameCubeLanguage", &StartUp.SelectedLanguage, StartUp.SelectedLanguage);
+    if (core_section->Get("EmulationSpeed", &StartUp.m_EmulationSpeed, StartUp.m_EmulationSpeed))
+      config_cache.bSetEmulationSpeed = true;
+    if (core_section->Get("FrameSkip", &SConfig::GetInstance().m_FrameSkip))
+    {
+      config_cache.bSetFrameSkip = true;
+      Movie::SetFrameSkipping(SConfig::GetInstance().m_FrameSkip);
+    }
+
+    if (dsp_section->Get("Volume", &StartUp.m_Volume, StartUp.m_Volume))
+      config_cache.bSetVolume = true;
+    dsp_section->Get("EnableJIT", &StartUp.m_DSPEnableJIT, StartUp.m_DSPEnableJIT);
+    dsp_section->Get("Backend", &StartUp.sBackend, StartUp.sBackend);
+    VideoBackendBase::ActivateBackend(StartUp.m_strVideoBackend);
+    core_section->Get("GPUDeterminismMode", &StartUp.m_strGPUDeterminismMode,
+                      StartUp.m_strGPUDeterminismMode);
+    core_section->Get("Overclock", &StartUp.m_OCFactor, StartUp.m_OCFactor);
+    core_section->Get("OverclockEnable", &StartUp.m_OCEnable, StartUp.m_OCEnable);
+    if (core_section->Get("AudioSlowDown", &StartUp.fAudioSlowDown, StartUp.fAudioSlowDown))
+    {
+      SConfig::GetInstance().m_AudioSlowDown = StartUp.fAudioSlowDown;
+    }
+    else
+    {
+      SConfig::GetInstance().m_AudioSlowDown = 1;
+      StartUp.fAudioSlowDown = 1;
+    }
+
+    for (unsigned int i = 0; i < SerialInterface::MAX_SI_CHANNELS; ++i)
+    {
+      int source;
+      controls_section->Get(StringFromFormat("PadType%u", i), &source, -1);
+      if (source >= SerialInterface::SIDEVICE_NONE && source < SerialInterface::SIDEVICE_COUNT)
+      {
+        StartUp.m_SIDevice[i] = static_cast<SerialInterface::SIDevices>(source);
+        config_cache.bSetPads[i] = true;
+      }
+    }
+
+    // Wii settings
+    if (StartUp.bWii)
+    {
+      int source;
+      for (unsigned int i = 0; i < MAX_WIIMOTES; ++i)
+      {
+        controls_section->Get(StringFromFormat("WiimoteSource%u", i), &source, -1);
+        if (source != -1 && g_wiimote_sources[i] != (unsigned)source &&
+            source >= WIIMOTE_SRC_NONE && source <= WIIMOTE_SRC_HYBRID)
+        {
+          config_cache.bSetWiimoteSource[i] = true;
+          g_wiimote_sources[i] = source;
+          WiimoteReal::ChangeWiimoteSource(i, source);
+        }
+      }
+      controls_section->Get("WiimoteSourceBB", &source, -1);
+      if (source != -1 && g_wiimote_sources[WIIMOTE_BALANCE_BOARD] != (unsigned)source &&
+          (source == WIIMOTE_SRC_NONE || source == WIIMOTE_SRC_REAL))
+      {
+        config_cache.bSetWiimoteSource[WIIMOTE_BALANCE_BOARD] = true;
+        g_wiimote_sources[WIIMOTE_BALANCE_BOARD] = source;
+        WiimoteReal::ChangeWiimoteSource(WIIMOTE_BALANCE_BOARD, source);
+      }
+    }
+  }
+
+  if (g_has_rift && !g_vr_has_asynchronous_timewarp && g_is_direct_mode && !g_force_vr &&
+      StartUp.m_GPUDeterminismMode != GPU_DETERMINISM_FAKE_COMPLETION && !StartUp.bSyncGPU &&
+      StartUp.bCPUThread)
+    PanicAlert("Detected that the Rift is running in direct mode without 'deterministic dual core' "
+               "set to 'fake-completion', 'synchronize GPU thread' enabled"
+               ", or dual core disabled. This has been found to cause judder in some games.  Try "
+               "enabling one of these settings if you experience issues. "
+               "They can be found in the 'config' tab or by right clicking on the game then "
+               "clicking properties.");
+
+  StartUp.m_GPUDeterminismMode = ParseGPUDeterminismMode(StartUp.m_strGPUDeterminismMode);
 
   // Movie settings
   if (Movie::IsPlayingInput() && Movie::IsConfigSaved())
   {
-    for (ExpansionInterface::Slot slot : ExpansionInterface::MEMCARD_SLOTS)
-    {
-      if (Movie::IsUsingMemcard(slot) && Movie::IsStartingFromClearSave() && !StartUp.bWii)
-      {
-        const auto raw_path =
-            File::GetUserPath(D_GCUSER_IDX) +
-            fmt::format("Movie{}.raw", slot == ExpansionInterface::Slot::A ? 'A' : 'B');
-        if (File::Exists(raw_path))
-          File::Delete(raw_path);
+    // TODO: remove this once ConfigManager starts using OnionConfig.
+    StartUp.bCPUThread = Config::Get(Config::MAIN_CPU_THREAD);
+    StartUp.bDSPHLE = Config::Get(Config::MAIN_DSP_HLE);
+    StartUp.bFastDiscSpeed = Config::Get(Config::MAIN_FAST_DISC_SPEED);
+    StartUp.iCPUCore = Config::Get(Config::MAIN_CPU_CORE);
+    StartUp.bSyncGPU = Config::Get(Config::MAIN_SYNC_GPU);
+    StartUp.bSkipIdle = Config::Get(Config::MAIN_SKIP_IDLE);
 
-        const auto movie_path = File::GetUserPath(D_GCUSER_IDX) + "Movie";
-        if (File::Exists(movie_path))
-          File::DeleteDirRecursively(movie_path);
+    if (!StartUp.bWii)
+      StartUp.SelectedLanguage = Config::Get(Config::MAIN_GC_LANGUAGE);
+    for (int i = 0; i < 2; ++i)
+    {
+      if (Movie::IsUsingMemcard(i) && Movie::IsStartingFromClearSave() && !StartUp.bWii)
+      {
+        if (File::Exists(File::GetUserPath(D_GCUSER_IDX) +
+                         StringFromFormat("Movie%s.raw", (i == 0) ? "A" : "B")))
+          File::Delete(File::GetUserPath(D_GCUSER_IDX) +
+                       StringFromFormat("Movie%s.raw", (i == 0) ? "A" : "B"));
+        if (File::Exists(File::GetUserPath(D_GCUSER_IDX) + "Movie"))
+          File::DeleteDirRecursively(File::GetUserPath(D_GCUSER_IDX) + "Movie");
       }
     }
   }
 
   if (NetPlay::IsNetPlayRunning())
   {
-    const NetPlay::NetSettings* netplay_settings = boot->boot_session_data.GetNetplaySettings();
-    if (!netplay_settings)
-      return false;
-
-    Config::AddLayer(ConfigLoaders::GenerateNetPlayConfigLoader(*netplay_settings));
-    StartUp.bCopyWiiSaveNetplay = netplay_settings->savedata_load;
+    INFO_LOG(CORE, "Booting Core: Adding net play layer");
+    Config::AddLayer(ConfigLoaders::GenerateNetPlayConfigLoader(g_NetPlaySettings));
+    StartUp.bCPUThread = g_NetPlaySettings.m_CPUthread;
+    StartUp.bEnableCheats = g_NetPlaySettings.m_EnableCheats;
+    StartUp.bDSPHLE = g_NetPlaySettings.m_DSPHLE;
+    StartUp.bEnableMemcardSdWriting = g_NetPlaySettings.m_WriteToMemcard;
+    StartUp.bCopyWiiSaveNetplay = g_NetPlaySettings.m_CopyWiiSave;
+    StartUp.iCPUCore = g_NetPlaySettings.m_CPUcore;
+    StartUp.SelectedLanguage = g_NetPlaySettings.m_SelectedLanguage;
+    StartUp.bOverrideGCLanguage = g_NetPlaySettings.m_OverrideGCLanguage;
+    StartUp.m_DSPEnableJIT = g_NetPlaySettings.m_DSPEnableJIT;
+    StartUp.m_OCEnable = g_NetPlaySettings.m_OCEnable;
+    StartUp.m_OCFactor = g_NetPlaySettings.m_OCFactor;
+    StartUp.m_EXIDevice[0] = g_NetPlaySettings.m_EXIDevice[0];
+    StartUp.m_EXIDevice[1] = g_NetPlaySettings.m_EXIDevice[1];
+    config_cache.bSetEXIDevice[0] = true;
+    config_cache.bSetEXIDevice[1] = true;
+  }
+  else
+  {
+    g_SRAM_netplay_initialized = false;
   }
 
-  // Override out-of-region languages/countries to prevent games from crashing or behaving oddly
-  if (!Config::Get(Config::MAIN_OVERRIDE_REGION_SETTINGS))
+  const bool ntsc = DiscIO::IsNTSC(StartUp.m_region);
+
+  // Apply overrides
+  // Some NTSC GameCube games such as Baten Kaitos react strangely to
+  // language settings that would be invalid on an NTSC system
+  if (!StartUp.bOverrideGCLanguage && ntsc)
   {
-    Config::SetCurrent(
-        Config::MAIN_GC_LANGUAGE,
-        DiscIO::ToGameCubeLanguage(StartUp.GetLanguageAdjustedForRegion(false, StartUp.m_region)));
-
-    if (StartUp.bWii)
-    {
-      const u32 wii_language =
-          static_cast<u32>(StartUp.GetLanguageAdjustedForRegion(true, StartUp.m_region));
-      if (wii_language != Config::Get(Config::SYSCONF_LANGUAGE))
-        Config::SetCurrent(Config::SYSCONF_LANGUAGE, wii_language);
-
-      const u8 country_code = static_cast<u8>(Config::Get(Config::SYSCONF_COUNTRY));
-      if (StartUp.m_region != DiscIO::SysConfCountryToRegion(country_code))
-      {
-        switch (StartUp.m_region)
-        {
-        case DiscIO::Region::NTSC_J:
-          Config::SetCurrent(Config::SYSCONF_COUNTRY, 0x01);  // Japan
-          break;
-        case DiscIO::Region::NTSC_U:
-          Config::SetCurrent(Config::SYSCONF_COUNTRY, 0x31);  // United States
-          break;
-        case DiscIO::Region::PAL:
-          Config::SetCurrent(Config::SYSCONF_COUNTRY, 0x6c);  // Switzerland
-          break;
-        case DiscIO::Region::NTSC_K:
-          Config::SetCurrent(Config::SYSCONF_COUNTRY, 0x88);  // South Korea
-          break;
-        case DiscIO::Region::Unknown:
-          break;
-        }
-      }
-    }
+    StartUp.SelectedLanguage = 0;
   }
 
   // Some NTSC Wii games such as Doc Louis's Punch-Out!! and
   // 1942 (Virtual Console) crash if the PAL60 option is enabled
-  if (StartUp.bWii && DiscIO::IsNTSC(StartUp.m_region) && Config::Get(Config::SYSCONF_PAL60))
+  if (StartUp.bWii && ntsc)
     Config::SetCurrent(Config::SYSCONF_PAL60, false);
 
-  // Disable loading time emulation for Riivolution-patched games until we have proper emulation.
-  if (!boot->riivolution_patches.empty())
-    Config::SetCurrent(Config::MAIN_FAST_DISC_SPEED, true);
-
-  Core::System::GetInstance().Initialize();
-
-  Core::UpdateWantDeterminism(/*initial*/ true);
-
+  // Ensure any new settings are written to the SYSCONF
   if (StartUp.bWii)
-  {
-    Core::InitializeWiiRoot(Core::WantsDeterminism());
+    ConfigLoaders::SaveToSYSCONF(Config::LayerType::Meta);
 
-    // Ensure any new settings are written to the SYSCONF
-    if (!Core::WantsDeterminism())
-    {
-      Core::BackupWiiSettings();
-      ConfigLoaders::SaveToSYSCONF(Config::LayerType::Meta);
-    }
-    else
-    {
-      ConfigLoaders::SaveToSYSCONF(Config::LayerType::Meta, [](const Config::Location& location) {
-        return Config::GetActiveLayerForConfig(location) >= Config::LayerType::Movie;
-      });
-    }
-  }
-
-#ifdef USE_RETRO_ACHIEVEMENTS
-  AchievementManager::GetInstance().SetDisabled(false);
-#endif  // USE_RETRO_ACHIEVEMENTS
-
-  const bool load_ipl = !StartUp.bWii && !Config::Get(Config::MAIN_SKIP_IPL) &&
+  const bool load_ipl = !StartUp.bWii && !StartUp.bHLE_BS2 &&
                         std::holds_alternative<BootParameters::Disc>(boot->parameters);
   if (load_ipl)
   {
-    return Core::Init(
-        std::make_unique<BootParameters>(
-            BootParameters::IPL{StartUp.m_region,
-                                std::move(std::get<BootParameters::Disc>(boot->parameters))},
-            std::move(boot->boot_session_data)),
-        wsi);
+    return Core::Init(std::make_unique<BootParameters>(BootParameters::IPL{
+        StartUp.m_region, std::move(std::get<BootParameters::Disc>(boot->parameters))}));
   }
-  return Core::Init(std::move(boot), wsi);
+  return Core::Init(std::move(boot));
+}
+
+void Stop()
+{
+  Core::Stop();
+  RestoreConfig();
 }
 
 // SYSCONF can be modified during emulation by the user and internally, which makes it
 // a bad idea to just always overwrite it with the settings from the base layer.
 //
-// Conversely, we also shouldn't just accept any changes to SYSCONF, as it may cause
+// Conversely, we also shouldn't just ignore any changes to SYSCONF, as it may cause
 // temporary settings (from Movie, Netplay, game INIs, etc.) to stick around.
 //
-// To avoid inconveniences in most cases, we accept changes that aren't being overriden by a
-// non-base layer, and restore only the overriden settings.
+// To avoid inconveniences in most cases, we always restore only the overridden settings.
 static void RestoreSYSCONF()
 {
   // This layer contains the new SYSCONF settings (including any temporary settings).
-  Config::Layer temp_layer(Config::LayerType::Base);
-  // Use a separate loader so the temp layer doesn't automatically save
-  ConfigLoaders::GenerateBaseConfigLoader()->Load(&temp_layer);
-
+  auto layer = std::make_unique<Config::Layer>(ConfigLoaders::GenerateBaseConfigLoader());
   for (const auto& setting : Config::SYSCONF_SETTINGS)
   {
     std::visit(
-        [&](auto* info) {
+        [&](auto& info) {
           // If this setting was overridden, then we copy the base layer value back to the SYSCONF.
           // Otherwise we leave the new value in the SYSCONF.
-          if (Config::GetActiveLayerForConfig(*info) == Config::LayerType::Base)
-            Config::SetBase(*info, temp_layer.Get(*info));
+          if (Config::GetActiveLayerForConfig(info) != Config::LayerType::Base)
+            layer->Set(info, Config::GetBase(info));
         },
         setting.config_info);
   }
   // Save the SYSCONF.
-  Config::GetLayer(Config::LayerType::Base)->Save();
+  layer->Save();
+  Config::AddLayer(std::move(layer));
 }
 
 void RestoreConfig()
 {
-  Core::ShutdownWiiRoot();
-
-  if (!Core::WiiRootIsTemporary())
-  {
-    Core::RestoreWiiSettings(Core::RestoreReason::EmulationEnd);
-    RestoreSYSCONF();
-  }
-
+  RestoreSYSCONF();
   Config::ClearCurrentRunLayer();
   Config::RemoveLayer(Config::LayerType::Movie);
   Config::RemoveLayer(Config::LayerType::Netplay);
   Config::RemoveLayer(Config::LayerType::GlobalGame);
   Config::RemoveLayer(Config::LayerType::LocalGame);
+  Config::RemoveLayer(Config::LayerType::VRGame);
   SConfig::GetInstance().ResetRunningGameMetadata();
+  config_cache.RestoreConfig(&SConfig::GetInstance());
 }
 
-}  // namespace BootManager
+}  // namespace

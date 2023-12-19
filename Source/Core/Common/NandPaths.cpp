@@ -1,81 +1,67 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "Common/NandPaths.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <algorithm>
 #include <string>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
-#include <fmt/format.h>
-
 #include "Common/CommonTypes.h"
+#include "Common/File.h"
 #include "Common/FileUtil.h"
+#include "Common/Logging/Log.h"
+#include "Common/NandPaths.h"
 #include "Common/StringUtil.h"
+#include "Common/Swap.h"
 
 namespace Common
 {
 std::string RootUserPath(FromWhichRoot from)
 {
-  int idx = from == FromWhichRoot::Configured ? D_WIIROOT_IDX : D_SESSION_WIIROOT_IDX;
-  std::string dir = File::GetUserPath(idx);
-  dir.pop_back();  // remove trailing path separator
-  return dir;
+  int idx = from == FROM_CONFIGURED_ROOT ? D_WIIROOT_IDX : D_SESSION_WIIROOT_IDX;
+  return File::GetUserPath(idx);
 }
 
-static std::string RootUserPath(std::optional<FromWhichRoot> from)
+std::string GetImportTitlePath(u64 title_id, FromWhichRoot from)
 {
-  return from ? RootUserPath(*from) : "";
+  return RootUserPath(from) + StringFromFormat("/import/%08x/%08x",
+                                               static_cast<u32>(title_id >> 32),
+                                               static_cast<u32>(title_id));
 }
 
-std::string GetImportTitlePath(u64 title_id, std::optional<FromWhichRoot> from)
+std::string GetTicketFileName(u64 _titleID, FromWhichRoot from)
 {
-  return RootUserPath(from) + fmt::format("/import/{:08x}/{:08x}", static_cast<u32>(title_id >> 32),
-                                          static_cast<u32>(title_id));
+  return StringFromFormat("%s/ticket/%08x/%08x.tik", RootUserPath(from).c_str(),
+                          (u32)(_titleID >> 32), (u32)_titleID);
 }
 
-std::string GetTicketFileName(u64 title_id, std::optional<FromWhichRoot> from)
+std::string GetTitlePath(u64 title_id, FromWhichRoot from)
 {
-  return fmt::format("{}/ticket/{:08x}/{:08x}.tik", RootUserPath(from),
-                     static_cast<u32>(title_id >> 32), static_cast<u32>(title_id));
+  return StringFromFormat("%s/title/%08x/%08x/", RootUserPath(from).c_str(),
+                          static_cast<u32>(title_id >> 32), static_cast<u32>(title_id));
 }
 
-std::string GetV1TicketFileName(u64 title_id, std::optional<FromWhichRoot> from)
+std::string GetTitleDataPath(u64 _titleID, FromWhichRoot from)
 {
-  return fmt::format("{}/ticket/{:08x}/{:08x}.tv1", RootUserPath(from),
-                     static_cast<u32>(title_id >> 32), static_cast<u32>(title_id));
+  return GetTitlePath(_titleID, from) + "data/";
 }
 
-std::string GetTitlePath(u64 title_id, std::optional<FromWhichRoot> from)
+std::string GetTitleContentPath(u64 _titleID, FromWhichRoot from)
 {
-  return fmt::format("{}/title/{:08x}/{:08x}", RootUserPath(from), static_cast<u32>(title_id >> 32),
-                     static_cast<u32>(title_id));
+  return GetTitlePath(_titleID, from) + "content/";
 }
 
-std::string GetTitleDataPath(u64 title_id, std::optional<FromWhichRoot> from)
+std::string GetTMDFileName(u64 _titleID, FromWhichRoot from)
 {
-  return GetTitlePath(title_id, from) + "/data";
+  return GetTitleContentPath(_titleID, from) + "title.tmd";
 }
 
-std::string GetTitleContentPath(u64 title_id, std::optional<FromWhichRoot> from)
-{
-  return GetTitlePath(title_id, from) + "/content";
-}
-
-std::string GetTMDFileName(u64 title_id, std::optional<FromWhichRoot> from)
-{
-  return GetTitleContentPath(title_id, from) + "/title.tmd";
-}
-
-std::string GetMiiDatabasePath(std::optional<FromWhichRoot> from)
-{
-  return fmt::format("{}/shared2/menu/FaceLib/RFL_DB.dat", RootUserPath(from));
-}
-
-bool IsTitlePath(const std::string& path, std::optional<FromWhichRoot> from, u64* title_id)
+bool IsTitlePath(const std::string& path, FromWhichRoot from, u64* title_id)
 {
   std::string expected_prefix = RootUserPath(from) + "/title/";
-  if (!path.starts_with(expected_prefix))
+  if (!StringBeginsWith(path, expected_prefix))
   {
     return false;
   }
@@ -89,8 +75,7 @@ bool IsTitlePath(const std::string& path, std::optional<FromWhichRoot> from, u64
   }
 
   u32 title_id_high, title_id_low;
-  if (Common::FromChars(components[0], title_id_high, 16).ec != std::errc{} ||
-      Common::FromChars(components[1], title_id_low, 16).ec != std::errc{})
+  if (!AsciiToHex(components[0], title_id_high) || !AsciiToHex(components[1], title_id_low))
   {
     return false;
   }
@@ -100,13 +85,6 @@ bool IsTitlePath(const std::string& path, std::optional<FromWhichRoot> from, u64
     *title_id = (static_cast<u64>(title_id_high) << 32) | title_id_low;
   }
   return true;
-}
-
-static bool IsIllegalCharacter(char c)
-{
-  static constexpr auto illegal_chars = {'\"', '*', '/', ':', '<', '>', '?', '\\', '|', '\x7f'};
-  return static_cast<unsigned char>(c) <= 0x1F ||
-         std::find(illegal_chars.begin(), illegal_chars.end(), c) != illegal_chars.end();
 }
 
 std::string EscapeFileName(const std::string& filename)
@@ -119,12 +97,14 @@ std::string EscapeFileName(const std::string& filename)
   std::string filename_with_escaped_double_underscores = ReplaceAll(filename, "__", "__5f____5f__");
 
   // Escape all other characters that need to be escaped
+  static const std::unordered_set<char> chars_to_replace = {'\"', '*', '/',  ':', '<',
+                                                            '>',  '?', '\\', '|', '\x7f'};
   std::string result;
   result.reserve(filename_with_escaped_double_underscores.size());
   for (char c : filename_with_escaped_double_underscores)
   {
-    if (IsIllegalCharacter(c))
-      result.append(fmt::format("__{:02x}__", c));
+    if ((c >= 0 && c <= 0x1F) || chars_to_replace.find(c) != chars_to_replace.end())
+      result.append(StringFromFormat("__%02x__", c));
     else
       result.push_back(c);
   }
@@ -155,22 +135,12 @@ std::string UnescapeFileName(const std::string& filename)
   {
     u32 character;
     if (pos + 6 <= result.size() && result[pos + 4] == '_' && result[pos + 5] == '_')
-      if (Common::FromChars(std::string_view{result}.substr(pos + 2, 2), character, 16).ec ==
-          std::errc{})
-      {
+      if (AsciiToHex(result.substr(pos + 2, 2), character))
         result.replace(pos, 6, {static_cast<char>(character)});
-      }
 
     ++pos;
   }
 
   return result;
 }
-
-bool IsFileNameSafe(const std::string_view filename)
-{
-  return !filename.empty() &&
-         !std::all_of(filename.begin(), filename.end(), [](char c) { return c == '.'; }) &&
-         std::none_of(filename.begin(), filename.end(), IsIllegalCharacter);
 }
-}  // namespace Common

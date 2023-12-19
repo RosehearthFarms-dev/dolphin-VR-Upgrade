@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/HW/DSPHLE/UCodes/INIT.h"
 
@@ -9,16 +10,26 @@
 #include "Core/HW/DSPHLE/MailHandler.h"
 #include "Core/HW/DSPHLE/UCodes/UCodes.h"
 
-namespace DSP::HLE
+namespace DSP
+{
+namespace HLE
 {
 INITUCode::INITUCode(DSPHLE* dsphle, u32 crc) : UCodeInterface(dsphle, crc)
 {
-  INFO_LOG_FMT(DSPHLE, "INITUCode - initialized");
+  INFO_LOG(DSPHLE, "INITUCode - initialized");
+}
+
+INITUCode::~INITUCode()
+{
 }
 
 void INITUCode::Initialize()
 {
   m_mail_handler.PushMail(0x80544348);
+}
+
+void INITUCode::Init()
+{
 }
 
 void INITUCode::Update()
@@ -28,9 +39,5 @@ void INITUCode::Update()
 void INITUCode::HandleMail(u32 mail)
 {
 }
-
-void INITUCode::DoState(PointerWrap& p)
-{
-  // We don't need to call DoStateShared() as the init uCode doesn't support launching new uCode
-}
-}  // namespace DSP::HLE
+}  // namespace HLE
+}  // namespace DSP

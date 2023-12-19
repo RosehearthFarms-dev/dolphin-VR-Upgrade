@@ -1,23 +1,16 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <string>
 #include "Common/CommonTypes.h"
 
-namespace Memory
+namespace IOS
 {
-class MemoryManager;
-}
-
-namespace IOS::HLE
+namespace HLE
 {
-namespace FS
-{
-class FileSystem;
-}
-
 namespace Net
 {
 #pragma pack(push, 1)
@@ -112,12 +105,12 @@ class WiiNetConfig final
 public:
   WiiNetConfig();
 
-  void ReadConfig(FS::FileSystem* fs);
-  void WriteConfig(FS::FileSystem* fs) const;
-  void ResetConfig(FS::FileSystem* fs);
+  void ReadConfig();
+  void WriteConfig() const;
+  void ResetConfig();
 
-  void WriteToMem(Memory::MemoryManager& memory, u32 address) const;
-  void ReadFromMem(const Memory::MemoryManager& memory, u32 address);
+  void WriteToMem(u32 address) const;
+  void ReadFromMem(u32 address);
 
 private:
 // Data layout of the network configuration file (/shared2/sys/net/02/config.dat)
@@ -142,7 +135,9 @@ private:
   };
 #pragma pack(pop)
 
-  ConfigData m_data{};
+  std::string m_path;
+  ConfigData m_data;
 };
 }  // namespace Net
-}  // namespace IOS::HLE
+}  // namespace HLE
+}  // namespace IOS

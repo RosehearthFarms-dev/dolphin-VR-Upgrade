@@ -1,22 +1,20 @@
 // Copyright 2010 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "UICommon/X11Utils.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <spawn.h>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <fmt/format.h>
-
 #include "Common/Logging/Log.h"
 #include "Common/StringUtil.h"
-#include "Core/Config/MainSettings.h"
+#include "Core/ConfigManager.h"
 #include "Core/Core.h"
 
 extern char** environ;
@@ -38,14 +36,14 @@ bool ToggleFullscreen(Display* dpy, Window win)
   if (!XSendEvent(dpy, DefaultRootWindow(dpy), False,
                   SubstructureRedirectMask | SubstructureNotifyMask, &event))
   {
-    ERROR_LOG_FMT(VIDEO, "Failed to switch fullscreen/windowed mode.");
+    ERROR_LOG(VIDEO, "Failed to switch fullscreen/windowed mode.");
     return false;
   }
 
   return true;
 }
 
-void InhibitScreensaver(Window win, bool suspend)
+void InhibitScreensaver(Display* dpy, Window win, bool suspend)
 {
   char id[11];
   snprintf(id, sizeof(id), "0x%lx", win);
@@ -59,11 +57,11 @@ void InhibitScreensaver(Window win, bool suspend)
     while (waitpid(pid, &status, 0) == -1)
       ;
 
-    INFO_LOG_FMT(VIDEO, "Started xdg-screensaver (PID = {})", pid);
+    INFO_LOG(VIDEO, "Started xdg-screensaver (PID = %d)", (int)pid);
   }
 }
 
-#ifdef HAVE_XRANDR
+#if defined(HAVE_XRANDR) && HAVE_XRANDR
 XRRConfiguration::XRRConfiguration(Display* _dpy, Window _win)
     : dpy(_dpy), win(_win), screenResources(nullptr), outputInfo(nullptr), crtcInfo(nullptr),
       fullMode(0), fs_fb_width(0), fs_fb_height(0), fs_fb_width_mm(0), fs_fb_height_mm(0),
@@ -74,7 +72,7 @@ XRRConfiguration::XRRConfiguration(Display* _dpy, Window _win)
   if (!XRRQueryVersion(dpy, &XRRMajorVersion, &XRRMinorVersion) ||
       (XRRMajorVersion < 1 || (XRRMajorVersion == 1 && XRRMinorVersion < 3)))
   {
-    WARN_LOG_FMT(VIDEO, "XRRExtension not supported.");
+    WARN_LOG(VIDEO, "XRRExtension not supported.");
     bValid = false;
     return;
   }
@@ -87,7 +85,7 @@ XRRConfiguration::XRRConfiguration(Display* _dpy, Window _win)
   fb_width_mm = DisplayWidthMM(dpy, screen);
   fb_height_mm = DisplayHeightMM(dpy, screen);
 
-  INFO_LOG_FMT(VIDEO, "XRRExtension-Version {}.{}", XRRMajorVersion, XRRMinorVersion);
+  INFO_LOG(VIDEO, "XRRExtension-Version %d.%d", XRRMajorVersion, XRRMinorVersion);
   Update();
 }
 
@@ -105,8 +103,7 @@ XRRConfiguration::~XRRConfiguration()
 
 void XRRConfiguration::Update()
 {
-  const std::string fullscreen_display_res = Config::Get(Config::MAIN_FULLSCREEN_DISPLAY_RES);
-  if (fullscreen_display_res == "Auto")
+  if (SConfig::GetInstance().strFullscreenResolution == "Auto")
     return;
 
   if (!bValid)
@@ -128,15 +125,15 @@ void XRRConfiguration::Update()
   unsigned int fullWidth, fullHeight;
   char* output_name = nullptr;
   char auxFlag = '\0';
-  if (fullscreen_display_res.find(':') == std::string::npos)
+  if (SConfig::GetInstance().strFullscreenResolution.find(':') == std::string::npos)
   {
     fullWidth = fb_width;
     fullHeight = fb_height;
   }
   else
   {
-    sscanf(fullscreen_display_res.c_str(), "%m[^:]: %ux%u%c", &output_name, &fullWidth, &fullHeight,
-           &auxFlag);
+    sscanf(SConfig::GetInstance().strFullscreenResolution.c_str(), "%m[^:]: %ux%u%c", &output_name,
+           &fullWidth, &fullHeight, &auxFlag);
   }
   bool want_interlaced = ('i' == auxFlag);
 
@@ -155,9 +152,8 @@ void XRRConfiguration::Update()
           if (!output_name)
           {
             output_name = strdup(output_info->name);
-            Config::SetBaseOrCurrent(
-                Config::MAIN_FULLSCREEN_DISPLAY_RES,
-                fmt::format("{}: {}x{}", output_info->name, fullWidth, fullHeight));
+            SConfig::GetInstance().strFullscreenResolution =
+                StringFromFormat("%s: %ux%u", output_info->name, fullWidth, fullHeight);
           }
           outputInfo = output_info;
           crtcInfo = crtc_info;
@@ -203,12 +199,12 @@ void XRRConfiguration::Update()
 
   if (outputInfo && crtcInfo && fullMode)
   {
-    INFO_LOG_FMT(VIDEO, "Fullscreen Resolution {}x{}", fullWidth, fullHeight);
+    INFO_LOG(VIDEO, "Fullscreen Resolution %dx%d", fullWidth, fullHeight);
   }
   else
   {
-    ERROR_LOG_FMT(VIDEO, "Failed to obtain fullscreen size.\n"
-                         "Using current desktop resolution for fullscreen.");
+    ERROR_LOG(VIDEO, "Failed to obtain fullscreen size.\n"
+                     "Using current desktop resolution for fullscreen.");
   }
 }
 
@@ -276,4 +272,4 @@ void XRRConfiguration::AddResolutions(std::vector<std::string>& resos)
 }
 
 #endif
-}  // namespace X11Utils
+}

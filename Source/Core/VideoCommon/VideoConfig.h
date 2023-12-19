@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // IMPORTANT: UI etc should modify g_Config. Graphics code should read g_ActiveConfig.
 // The reason for this is to get rid of race conditions etc when the configuration
@@ -9,268 +10,329 @@
 
 #pragma once
 
-#include <optional>
 #include <string>
 #include <vector>
 
 #include "Common/CommonTypes.h"
-#include "VideoCommon/GraphicsModSystem/Config/GraphicsModGroup.h"
 #include "VideoCommon/VideoCommon.h"
 
-constexpr int EFB_SCALE_AUTO_INTEGRAL = 0;
+// Log in two categories, and save three other options in the same byte
+#define CONF_LOG 1
+#define CONF_PRIMLOG 2
+#define CONF_SAVETARGETS 8
+#define CONF_SAVESHADERS 16
 
-enum class AspectMode : int
+enum AspectMode
 {
-  Auto,           // 4:3 or 16:9
-  ForceWide,      // 16:9
-  ForceStandard,  // 4:3
-  Stretch,
-  Custom,
+  ASPECT_AUTO = 0,
+  ASPECT_ANALOG_WIDE = 1,
+  ASPECT_ANALOG = 2,
+  ASPECT_STRETCH = 3,
 };
 
-enum class StereoMode : int
+enum EFBScale
 {
-  Off,
-  SBS,
-  TAB,
-  Anaglyph,
-  QuadBuffer,
-  Passive
+  SCALE_FORCE_INTEGRAL = -1,
+  SCALE_AUTO,
+  SCALE_AUTO_INTEGRAL,
+  SCALE_1X,
+  SCALE_1_5X,
+  SCALE_2X,
+  SCALE_2_5X,
 };
 
-enum class ShaderCompilationMode : int
+enum StereoMode
 {
-  Synchronous,
-  SynchronousUberShaders,
-  AsynchronousUberShaders,
-  AsynchronousSkipRendering
+  STEREO_OFF = 0,
+  STEREO_SBS,
+  STEREO_TAB,
+  STEREO_ANAGLYPH,
+  STEREO_OSVR,
+  STEREO_QUADBUFFER,
+  STEREO_3DVISION,
+  STEREO_OCULUS,
+  STEREO_VR920,
 };
 
-enum class TextureFilteringMode : int
+enum TGameCamera
 {
-  Default,
-  Nearest,
-  Linear,
+  CAMERA_YAWPITCHROLL = 0,
+  CAMERA_YAWPITCH,
+  CAMERA_YAW,
+  CAMERA_NONE
 };
 
-enum class OutputResamplingMode : int
+struct ProjectionHackConfig final
 {
-  Default,
-  Bilinear,
-  BSpline,
-  MitchellNetravali,
-  CatmullRom,
-  SharpBilinear,
-  AreaSampling,
-};
-
-enum class ColorCorrectionRegion : int
-{
-  SMPTE_NTSCM,
-  SYSTEMJ_NTSCJ,
-  EBU_PAL,
-};
-
-enum class TriState : int
-{
-  Off,
-  On,
-  Auto
-};
-
-// Bitmask containing information about which configuration has changed for the backend.
-enum ConfigChangeBits : u32
-{
-  CONFIG_CHANGE_BIT_HOST_CONFIG = (1 << 0),
-  CONFIG_CHANGE_BIT_MULTISAMPLES = (1 << 1),
-  CONFIG_CHANGE_BIT_STEREO_MODE = (1 << 2),
-  CONFIG_CHANGE_BIT_TARGET_SIZE = (1 << 3),
-  CONFIG_CHANGE_BIT_ANISOTROPY = (1 << 4),
-  CONFIG_CHANGE_BIT_FORCE_TEXTURE_FILTERING = (1 << 5),
-  CONFIG_CHANGE_BIT_VSYNC = (1 << 6),
-  CONFIG_CHANGE_BIT_BBOX = (1 << 7),
-  CONFIG_CHANGE_BIT_ASPECT_RATIO = (1 << 8),
-  CONFIG_CHANGE_BIT_POST_PROCESSING_SHADER = (1 << 9),
-  CONFIG_CHANGE_BIT_HDR = (1 << 10),
+  bool m_enable;
+  bool m_sznear;
+  bool m_szfar;
+  std::string m_znear;
+  std::string m_zfar;
 };
 
 // NEVER inherit from this class.
 struct VideoConfig final
 {
-  VideoConfig() = default;
+  VideoConfig();
   void Refresh();
+  void GameIniSave();
+  void GameIniReset();
   void VerifyValidity();
+  void UpdateProjectionHack();
+  bool IsVSync() const;
+  bool VRSettingsModified();
 
   // General
-  bool bVSync = false;
-  bool bVSyncActive = false;
-  bool bWidescreenHack = false;
-  AspectMode aspect_mode{};
-  int custom_aspect_width = 1;
-  int custom_aspect_height = 1;
-  AspectMode suggested_aspect_mode{};
-  u32 widescreen_heuristic_transition_threshold = 0;
-  float widescreen_heuristic_aspect_ratio_slop = 0.f;
-  float widescreen_heuristic_standard_ratio = 0.f;
-  float widescreen_heuristic_widescreen_ratio = 0.f;
-  bool bCrop = false;  // Aspect ratio controls.
-  bool bShaderCache = false;
+  bool bVSync;
+  bool bWidescreenHack;
+  int iAspectRatio;
+  bool bCrop;  // Aspect ratio controls.
+  bool bUseXFB;
+  bool bUseRealXFB;
+  bool bShaderCache;
 
   // Enhancements
-  u32 iMultisamples = 0;
-  bool bSSAA = false;
-  int iEFBScale = 0;
-  TextureFilteringMode texture_filtering_mode = TextureFilteringMode::Default;
-  OutputResamplingMode output_resampling_mode = OutputResamplingMode::Default;
-  int iMaxAnisotropy = 0;
+  u32 iMultisamples;
+  bool bSSAA;
+  int iEFBScale;
+  int iInternalResolution;
+  bool bForceFiltering;
+  int iMaxAnisotropy;
   std::string sPostProcessingShader;
-  bool bForceTrueColor = false;
-  bool bDisableCopyFilter = false;
-  bool bArbitraryMipmapDetection = false;
-  float fArbitraryMipmapDetectionThreshold = 0;
-  bool bHDR = false;
-
-  // Color Correction
-  struct
-  {
-    // Color Space Correction:
-    bool bCorrectColorSpace = false;
-    ColorCorrectionRegion game_color_space = ColorCorrectionRegion::SMPTE_NTSCM;
-
-    // Gamma Correction:
-    bool bCorrectGamma = false;
-    float fGameGamma = 2.35f;
-    bool bSDRDisplayGammaSRGB = true;
-    // Custom gamma when the display is not sRGB
-    float fSDRDisplayCustomGamma = 2.2f;
-
-    // HDR:
-    // 203 is a good default value that matches the brightness of many SDR screens.
-    // It's also the value recommended by the ITU.
-    float fHDRPaperWhiteNits = 203.f;
-  } color_correction;
+  bool bForceTrueColor;
 
   // Information
-  bool bShowFPS = false;
-  bool bShowFTimes = false;
-  bool bShowVPS = false;
-  bool bShowVTimes = false;
-  bool bShowGraphs = false;
-  bool bShowSpeed = false;
-  bool bShowSpeedColors = false;
-  int iPerfSampleUSec = 0;
-  bool bShowNetPlayPing = false;
-  bool bShowNetPlayMessages = false;
-  bool bOverlayStats = false;
-  bool bOverlayProjStats = false;
-  bool bOverlayScissorStats = false;
-  bool bTexFmtOverlayEnable = false;
-  bool bTexFmtOverlayCenter = false;
-  bool bLogRenderTimeToFile = false;
+  bool bShowFPS;
+  bool bShowNetPlayPing;
+  bool bShowNetPlayMessages;
+  bool bOverlayStats;
+  bool bOverlayProjStats;
+  bool bTexFmtOverlayEnable;
+  bool bTexFmtOverlayCenter;
+  bool bLogRenderTimeToFile;
 
   // Render
-  bool bWireFrame = false;
-  bool bDisableFog = false;
+  bool bWireFrame;
+  bool bDisableFog;
 
   // Utility
-  bool bDumpTextures = false;
-  bool bDumpMipmapTextures = false;
-  bool bDumpBaseTextures = false;
-  bool bHiresTextures = false;
-  bool bCacheHiresTextures = false;
-  bool bDumpEFBTarget = false;
-  bool bDumpXFBTarget = false;
-  bool bDumpFramesAsImages = false;
-  bool bUseFFV1 = false;
+  bool bDumpTextures;
+  bool bHiresTextures;
+  bool bConvertHiresTextures;
+  bool bCacheHiresTextures;
+  bool bDumpEFBTarget;
+  bool bDumpFramesAsImages;
+  bool bUseFFV1;
   std::string sDumpCodec;
-  std::string sDumpPixelFormat;
-  std::string sDumpEncoder;
   std::string sDumpFormat;
   std::string sDumpPath;
-  bool bInternalResolutionFrameDumps = false;
-  bool bBorderlessFullscreen = false;
-  bool bEnableGPUTextureDecoding = false;
-  bool bPreferVSForLinePointExpansion = false;
-  int iBitrateKbps = 0;
-  bool bGraphicMods = false;
-  std::optional<GraphicsModGroupConfig> graphics_mod_config;
+  bool bInternalResolutionFrameDumps;
+  bool bFreeLook;
+  bool bBorderlessFullscreen;
+  bool bEnableGPUTextureDecoding;
+  int iBitrateKbps;
 
   // Hacks
-  bool bEFBAccessEnable = false;
-  bool bEFBAccessDeferInvalidation = false;
-  bool bPerfQueriesEnable = false;
-  bool bBBoxEnable = false;
-  bool bForceProgressive = false;
-  bool bCPUCull = false;
+  bool bEFBAccessEnable;
+  bool bPerfQueriesEnable;
+  bool bBBoxEnable;
+  bool bBBoxPreferStencilImplementation;  // OpenGL-only, to see how slow it is compared to SSBOs
+  bool bForceProgressive;
 
-  bool bEFBEmulateFormatChanges = false;
-  bool bSkipEFBCopyToRam = false;
-  bool bSkipXFBCopyToRam = false;
-  bool bDisableCopyToVRAM = false;
-  bool bDeferEFBCopies = false;
-  bool bImmediateXFB = false;
-  bool bSkipPresentingDuplicateXFBs = false;
-  bool bCopyEFBScaled = false;
-  int iSafeTextureCache_ColorSamples = 0;
-  float fAspectRatioHackW = 1;  // Initial value needed for the first frame
-  float fAspectRatioHackH = 1;
-  bool bEnablePixelLighting = false;
-  bool bFastDepthCalc = false;
-  bool bVertexRounding = false;
-  bool bVISkip = false;
-  int iEFBAccessTileSize = 0;
-  int iSaveTargetId = 0;  // TODO: Should be dropped
-  u32 iMissingColorValue = 0;
-  bool bFastTextureSampling = false;
-#ifdef __APPLE__
-  bool bNoMipmapping = false;  // Used by macOS fifoci to work around an M1 bug
-#endif
+  bool bEFBCopyEnable;
+  bool bEFBCopyClearDisable;
+  bool bEFBEmulateFormatChanges;
+  bool bSkipEFBCopyToRam;
+  bool bCopyEFBScaled;
+  int iSafeTextureCache_ColorSamples;
+  ProjectionHackConfig phack;
+  float fAspectRatioHackW, fAspectRatioHackH;
+  bool bEnablePixelLighting;
+  bool bFastDepthCalc;
+  bool bVertexRounding;
+  int iLog;           // CONF_ bits
+  int iSaveTargetId;  // TODO: Should be dropped
 
   // Stereoscopy
-  StereoMode stereo_mode{};
-  int iStereoDepth = 0;
-  int iStereoConvergence = 0;
-  int iStereoConvergencePercentage = 0;
-  bool bStereoSwapEyes = false;
-  bool bStereoEFBMonoDepth = false;
-  int iStereoDepthPercentage = 0;
+  int iStereoMode;
+  int iStereoDepth;
+  int iStereoConvergence;
+  int iStereoConvergencePercentage;
+  bool bStereoSwapEyes;
+  bool bStereoEFBMonoDepth;
+  int iStereoDepthPercentage;
+
+  // VR global
+  float fScale;
+  float fLeanBackAngle;
+  bool bStabilizeRoll;
+  bool bStabilizePitch;
+  bool bStabilizeYaw;
+  bool bStabilizeX;
+  bool bStabilizeY;
+  bool bStabilizeZ;
+  bool bKeyhole;
+  float fKeyholeWidth;
+  bool bKeyholeSnap;
+  float fKeyholeSnapSize;
+  bool bPullUp20fps;
+  bool bPullUp30fps;
+  bool bPullUp60fps;
+  bool bPullUpAuto;
+  bool bSynchronousTimewarp;
+  bool bOpcodeWarningDisable;
+  bool bReplayVertexData;
+  bool bReplayOtherData;
+  bool bPullUp20fpsTimewarp;
+  bool bPullUp30fpsTimewarp;
+  bool bPullUp60fpsTimewarp;
+  bool bPullUpAutoTimewarp;
+  bool bOpcodeReplay;
+  bool bAsynchronousTimewarp;
+  bool bEnableVR;
+  bool bLowPersistence;
+  bool bDynamicPrediction;
+  bool bOrientationTracking;
+  bool bMagYawCorrection;
+  bool bPositionTracking;
+  bool bChromatic;
+  bool bTimewarp;
+  bool bVignette;
+  bool bNoRestore;
+  bool bFlipVertical;
+  bool bSRGB;
+  bool bOverdrive;
+  bool bHqDistortion;
+  bool bDisableNearClipping;
+  bool bAutoPairViveControllers;
+  bool bShowHands;
+  bool bShowFeet;
+  bool bShowController;
+  bool bShowLaserPointer;
+  bool bShowAimRectangle;
+  bool bShowHudBox;
+  bool bShow2DBox;
+  bool bShowSensorBar;
+  bool bShowGameCamera;
+  bool bShowGameFrustum;
+  bool bShowTrackingCamera;
+  bool bShowTrackingVolume;
+  bool bShowBaseStation;
+  bool bMotionSicknessAlways;
+  bool bMotionSicknessFreelook;
+  bool bMotionSickness2D;
+  bool bMotionSicknessLeftStick;
+  bool bMotionSicknessRightStick;
+  bool bMotionSicknessDPad;
+  bool bMotionSicknessIR;
+  int iMotionSicknessMethod;
+  int iMotionSicknessSkybox;
+  float fMotionSicknessFOV;
+
+  int iVRPlayer, iVRPlayer2, iMirrorPlayer;
+  int iMirrorStyle;
+  float fTimeWarpTweak;
+  u32 iExtraTimewarpedFrames;
+  u32 iExtraVideoLoops;
+  u32 iExtraVideoLoopsDivider;
+
+  std::string sLeftTexture;
+  std::string sRightTexture;
+  std::string sGCLeftTexture;
+  std::string sGCRightTexture;
+
+  // VR per game
+  float fUnitsPerMetre;
+  float fFreeLookSensitivity;
+  float fHudThickness;
+  float fHudDistance;
+  float fHud3DCloser;
+  float fCameraForward;
+  float fCameraPitch;
+  float fAimDistance;
+  float fMinFOV;
+  float fN64FOV;
+  float fScreenHeight;
+  float fScreenThickness;
+  float fScreenDistance;
+  float fScreenRight;
+  float fScreenUp;
+  float fScreenPitch;
+  float fTelescopeMaxFOV;
+  float fReadPitch;
+
+  float fHudDespPosition0;
+  float fHudDespPosition1;
+  float fHudDespPosition2;
+  Matrix33 matrixHudrot;
+
+  u32 iCameraMinPoly;
+  bool bDisable3D;
+  bool bHudFullscreen;
+  bool bHudOnTop;
+  bool bDontClearScreen;
+  bool bCanReadCameraAngles;
+  bool bDetectSkybox;
+  int iTelescopeEye;
+  int iMetroidPrime;
+  // VR layer debugging
+  int iSelectedLayer;
+  int iFlashState;
 
   // D3D only config, mostly to be merged into the above
-  int iAdapter = 0;
+  int iAdapter;
 
-  // Metal only config
-  TriState iManuallyUploadBuffers = TriState::Auto;
-  TriState iUsePresentDrawable = TriState::Auto;
+  // VideoSW Debugging
+  int drawStart;
+  int drawEnd;
+  bool bZComploc;
+  bool bZFreeze;
+  bool bDumpObjects;
+  bool bDumpTevStages;
+  bool bDumpTevTextureFetches;
 
   // Enable API validation layers, currently only supported with Vulkan.
-  bool bEnableValidationLayer = false;
+  bool bEnableValidationLayer;
 
   // Multithreaded submission, currently only supported with Vulkan.
-  bool bBackendMultithreading = true;
+  bool bBackendMultithreading;
 
   // Early command buffer execution interval in number of draws.
   // Currently only supported with Vulkan.
-  int iCommandBufferExecuteInterval = 0;
+  int iCommandBufferExecuteInterval;
 
-  // Shader compilation settings.
-  bool bWaitForShadersBeforeStarting = false;
-  ShaderCompilationMode iShaderCompilationMode{};
+  // The following options determine the ubershader mode:
+  //   No ubershaders:
+  //     - bBackgroundShaderCompiling = false
+  //     - bDisableSpecializedShaders = false
+  //   Hybrid/background compiling:
+  //     - bBackgroundShaderCompiling = true
+  //     - bDisableSpecializedShaders = false
+  //   Ubershaders only:
+  //     - bBackgroundShaderCompiling = false
+  //     - bDisableSpecializedShaders = true
+
+  // Enable background shader compiling, use ubershaders while waiting.
+  bool bBackgroundShaderCompiling;
+
+  // Use ubershaders only, don't compile specialized shaders.
+  bool bDisableSpecializedShaders;
+
+  // Precompile ubershader variants at boot/config reload time.
+  bool bPrecompileUberShaders;
 
   // Number of shader compiler threads.
   // 0 disables background compilation.
   // -1 uses an automatic number based on the CPU threads.
-  int iShaderCompilerThreads = 0;
-  int iShaderPrecompilerThreads = 0;
-
-  // Loading custom drivers on Android
-  std::string customDriverLibraryName;
+  int iShaderCompilerThreads;
+  int iShaderPrecompilerThreads;
 
   // Static config per API
   // TODO: Move this out of VideoConfig
   struct
   {
-    APIType api_type = APIType::Nothing;
-    std::string DisplayName;
+    APIType api_type;
 
     std::vector<std::string> Adapters;  // for D3D
     std::vector<u32> AAModes;
@@ -278,98 +340,60 @@ struct VideoConfig final
     // TODO: merge AdapterName and Adapters array
     std::string AdapterName;  // for OpenGL
 
-    u32 MaxTextureSize = 16384;
-    bool bUsesLowerLeftOrigin = false;
-    bool bUsesExplictQuadBuffering = false;
+    u32 MaxTextureSize;
 
-    bool bSupportsExclusiveFullscreen = false;
-    bool bSupportsDualSourceBlend = false;
-    bool bSupportsPrimitiveRestart = false;
-    bool bSupportsGeometryShaders = false;
-    bool bSupportsComputeShaders = false;
-    bool bSupports3DVision = false;
-    bool bSupportsEarlyZ = false;         // needed by PixelShaderGen, so must stay in VideoCommon
-    bool bSupportsBindingLayout = false;  // Needed by ShaderGen, so must stay in VideoCommon
-    bool bSupportsBBox = false;
-    bool bSupportsGSInstancing = false;  // Needed by GeometryShaderGen, so must stay in VideoCommon
-    bool bSupportsPostProcessing = false;
-    bool bSupportsPaletteConversion = false;
-    bool bSupportsClipControl = false;  // Needed by VertexShaderGen, so must stay in VideoCommon
-    bool bSupportsSSAA = false;
-    bool bSupportsFragmentStoresAndAtomics = false;  // a.k.a. OpenGL SSBOs a.k.a. Direct3D UAVs
-    bool bSupportsDepthClamp = false;  // Needed by VertexShaderGen, so must stay in VideoCommon
-    bool bSupportsReversedDepthRange = false;
-    bool bSupportsLogicOp = false;
-    bool bSupportsMultithreading = false;
-    bool bSupportsGPUTextureDecoding = false;
-    bool bSupportsST3CTextures = false;
-    bool bSupportsCopyToVram = false;
-    bool bSupportsBitfield = false;  // Needed by UberShaders, so must stay in VideoCommon
-    // Needed by UberShaders, so must stay in VideoCommon
-    bool bSupportsDynamicSamplerIndexing = false;
-    bool bSupportsBPTCTextures = false;
-    bool bSupportsFramebufferFetch = false;  // Used as an alternative to dual-source blend on GLES
-    bool bSupportsBackgroundCompiling = false;
-    bool bSupportsLargePoints = false;
-    bool bSupportsPartialDepthCopies = false;
-    bool bSupportsDepthReadback = false;
-    bool bSupportsShaderBinaries = false;
-    bool bSupportsPipelineCacheData = false;
-    bool bSupportsCoarseDerivatives = false;
-    bool bSupportsTextureQueryLevels = false;
-    bool bSupportsLodBiasInSampler = false;
-    bool bSupportsSettingObjectNames = false;
-    bool bSupportsPartialMultisampleResolve = false;
-    bool bSupportsDynamicVertexLoader = false;
-    bool bSupportsVSLinePointExpand = false;
-    bool bSupportsGLLayerInFS = true;
-    bool bSupportsHDROutput = false;
+    bool bSupportsExclusiveFullscreen;
+    bool bSupportsDualSourceBlend;
+    bool bSupportsPrimitiveRestart;
+    bool bSupportsOversizedViewports;
+    bool bSupportsGeometryShaders;
+    bool bSupportsComputeShaders;
+    bool bSupports3DVision;
+    bool bSupportsEarlyZ;         // needed by PixelShaderGen, so must stay in VideoCommon
+    bool bSupportsBindingLayout;  // Needed by ShaderGen, so must stay in VideoCommon
+    bool bSupportsBBox;
+    bool bSupportsGSInstancing;  // Needed by GeometryShaderGen, so must stay in VideoCommon
+    bool bSupportsPostProcessing;
+    bool bSupportsPaletteConversion;
+    bool bSupportsClipControl;  // Needed by VertexShaderGen, so must stay in VideoCommon
+    bool bSupportsSSAA;
+    bool bSupportsFragmentStoresAndAtomics;  // a.k.a. OpenGL SSBOs a.k.a. Direct3D UAVs
+    bool bSupportsDepthClamp;  // Needed by VertexShaderGen, so must stay in VideoCommon
+    bool bSupportsReversedDepthRange;
+    bool bSupportsMultithreading;
+    bool bSupportsInternalResolutionFrameDumps;
+    bool bSupportsGPUTextureDecoding;
+    bool bSupportsST3CTextures;
+    bool bSupportsBitfield;                // Needed by UberShaders, so must stay in VideoCommon
+    bool bSupportsDynamicSamplerIndexing;  // Needed by UberShaders, so must stay in VideoCommon
+    bool bSupportsBPTCTextures;
   } backend_info;
 
   // Utility
-  bool UseVSForLinePointExpand() const
-  {
-    if (!backend_info.bSupportsVSLinePointExpand)
-      return false;
-    if (!backend_info.bSupportsGeometryShaders)
-      return true;
-    return bPreferVSForLinePointExpansion;
-  }
+  bool RealXFBEnabled() const { return bUseXFB && bUseRealXFB; }
+  bool VirtualXFBEnabled() const { return bUseXFB && !bUseRealXFB; }
   bool MultisamplingEnabled() const { return iMultisamples > 1; }
+  bool EFBCopiesToTextureEnabled() const { return bEFBCopyEnable && bSkipEFBCopyToRam; }
+  bool EFBCopiesToRamEnabled() const { return bEFBCopyEnable && !bSkipEFBCopyToRam; }
   bool ExclusiveFullscreenEnabled() const
   {
     return backend_info.bSupportsExclusiveFullscreen && !bBorderlessFullscreen;
+  }
+  bool BBoxUseFragmentShaderImplementation() const
+  {
+    if (backend_info.api_type == APIType::OpenGL && bBBoxPreferStencilImplementation)
+      return false;
+    return backend_info.bSupportsBBox && backend_info.bSupportsFragmentStoresAndAtomics;
   }
   bool UseGPUTextureDecoding() const
   {
     return backend_info.bSupportsGPUTextureDecoding && bEnableGPUTextureDecoding;
   }
-  bool UseVertexRounding() const { return bVertexRounding && iEFBScale != 1; }
-  bool ManualTextureSamplingWithCustomTextureSizes() const
-  {
-    // If manual texture sampling is disabled, we don't need to do anything.
-    if (bFastTextureSampling)
-      return false;
-    // Hi-res textures break the wrapping logic used by manual texture sampling, as a texture's
-    // size won't match the size the game sets.
-    if (bHiresTextures)
-      return true;
-    // Hi-res EFB copies (but not native-resolution EFB copies at higher internal resolutions)
-    // also result in different texture sizes that need special handling.
-    if (iEFBScale != 1 && bCopyEFBScaled)
-      return true;
-    // Stereoscopic 3D changes the number of layers some textures have (EFB copies have 2 layers,
-    // while game textures still have 1), meaning bounds checks need to be added.
-    if (stereo_mode != StereoMode::Off)
-      return true;
-    // Otherwise, manual texture sampling can use the sizes games specify directly.
-    return false;
-  }
-  bool UsingUberShaders() const;
+  bool UseVertexRounding() const { return bVertexRounding && iEFBScale != SCALE_1X; }
   u32 GetShaderCompilerThreads() const;
   u32 GetShaderPrecompilerThreads() const;
-
-  float GetCustomAspectRatio() const { return (float)custom_aspect_width / custom_aspect_height; }
+  bool CanPrecompileUberShaders() const;
+  bool CanBackgroundCompileShaders() const;
 };
 
 extern VideoConfig g_Config;
@@ -377,4 +401,3 @@ extern VideoConfig g_ActiveConfig;
 
 // Called every frame.
 void UpdateActiveConfig();
-void CheckForConfigChanges();

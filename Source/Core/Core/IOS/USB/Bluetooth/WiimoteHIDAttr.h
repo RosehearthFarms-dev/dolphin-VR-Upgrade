@@ -1,11 +1,15 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include "Common/CommonTypes.h"
 
-namespace IOS::HLE
+namespace IOS
+{
+namespace HLE
 {
 const u8* GetAttribPacket(u32 serviceHandle, u32 cont, u32& _size);
-}  // namespace IOS::HLE
+}  // namespace HLE
+}  // namespace IOS

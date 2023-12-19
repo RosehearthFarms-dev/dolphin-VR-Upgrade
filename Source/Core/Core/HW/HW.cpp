@@ -1,25 +1,22 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/HW/HW.h"
 
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
 
-#include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
-#include "Core/HW/AddressSpace.h"
 #include "Core/HW/AudioInterface.h"
 #include "Core/HW/CPU.h"
 #include "Core/HW/DSP.h"
 #include "Core/HW/DVD/DVDInterface.h"
 #include "Core/HW/EXI/EXI.h"
 #include "Core/HW/GPFifo.h"
-#include "Core/HW/HSP/HSP.h"
 #include "Core/HW/Memmap.h"
-#include "Core/HW/MemoryInterface.h"
 #include "Core/HW/ProcessorInterface.h"
 #include "Core/HW/SI/SI.h"
 #include "Core/HW/SystemTimers.h"
@@ -27,86 +24,79 @@
 #include "Core/HW/WII_IPC.h"
 #include "Core/IOS/IOS.h"
 #include "Core/State.h"
-#include "Core/System.h"
+#include "Core/WiiRoot.h"
 
 namespace HW
 {
-void Init(Core::System& system, const Sram* override_sram)
+void Init()
 {
-  system.GetCoreTiming().Init();
+  CoreTiming::Init();
   SystemTimers::PreInit();
 
   State::Init();
 
   // Init the whole Hardware
-  system.GetAudioInterface().Init();
-  system.GetVideoInterface().Init();
-  system.GetSerialInterface().Init();
-  system.GetProcessorInterface().Init();
-  system.GetExpansionInterface().Init(override_sram);  // Needs to be initialized before Memory
-  system.GetHSP().Init();
-  system.GetMemory().Init();  // Needs to be initialized before AddressSpace
-  AddressSpace::Init();
-  system.GetMemoryInterface().Init();
-  system.GetDSP().Init(Config::Get(Config::MAIN_DSP_HLE));
-  system.GetDVDInterface().Init();
-  system.GetGPFifo().Init();
-  system.GetCPU().Init(Config::Get(Config::MAIN_CPU_CORE));
+  AudioInterface::Init();
+  VideoInterface::Init();
+  SerialInterface::Init();
+  ProcessorInterface::Init();
+  ExpansionInterface::Init();  // Needs to be initialized before Memory
+  Memory::Init();
+  DSP::Init(SConfig::GetInstance().bDSPHLE);
+  DVDInterface::Init();
+  GPFifo::Init();
+  CPU::Init(SConfig::GetInstance().iCPUCore);
   SystemTimers::Init();
 
   if (SConfig::GetInstance().bWii)
   {
+    // The NAND should only be initialised once per emulation session.
+    Core::InitializeWiiRoot(Core::WantsDeterminism());
     IOS::Init();
-    IOS::HLE::Init(system);  // Depends on Memory
+    IOS::HLE::Init();  // Depends on Memory
   }
 }
 
-void Shutdown(Core::System& system)
+void Shutdown()
 {
   // IOS should always be shut down regardless of bWii because it can be running in GC mode (MIOS).
   IOS::HLE::Shutdown();  // Depends on Memory
   IOS::Shutdown();
+  Core::ShutdownWiiRoot();
 
   SystemTimers::Shutdown();
-  system.GetCPU().Shutdown();
-  system.GetDVDInterface().Shutdown();
-  system.GetDSP().Shutdown();
-  system.GetMemoryInterface().Shutdown();
-  AddressSpace::Shutdown();
-  system.GetMemory().Shutdown();
-  system.GetHSP().Shutdown();
-  system.GetExpansionInterface().Shutdown();
-  system.GetSerialInterface().Shutdown();
-  system.GetAudioInterface().Shutdown();
+  CPU::Shutdown();
+  DVDInterface::Shutdown();
+  DSP::Shutdown();
+  Memory::Shutdown();
+  ExpansionInterface::Shutdown();
+  SerialInterface::Shutdown();
+  AudioInterface::Shutdown();
 
   State::Shutdown();
-  system.GetCoreTiming().Shutdown();
+  CoreTiming::Shutdown();
 }
 
-void DoState(Core::System& system, PointerWrap& p)
+void DoState(PointerWrap& p)
 {
-  system.GetMemory().DoState(p);
+  Memory::DoState(p);
   p.DoMarker("Memory");
-  system.GetMemoryInterface().DoState(p);
-  p.DoMarker("MemoryInterface");
-  system.GetVideoInterface().DoState(p);
+  VideoInterface::DoState(p);
   p.DoMarker("VideoInterface");
-  system.GetSerialInterface().DoState(p);
+  SerialInterface::DoState(p);
   p.DoMarker("SerialInterface");
-  system.GetProcessorInterface().DoState(p);
+  ProcessorInterface::DoState(p);
   p.DoMarker("ProcessorInterface");
-  system.GetDSP().DoState(p);
+  DSP::DoState(p);
   p.DoMarker("DSP");
-  system.GetDVDInterface().DoState(p);
+  DVDInterface::DoState(p);
   p.DoMarker("DVDInterface");
-  system.GetGPFifo().DoState(p);
+  GPFifo::DoState(p);
   p.DoMarker("GPFifo");
-  system.GetExpansionInterface().DoState(p);
+  ExpansionInterface::DoState(p);
   p.DoMarker("ExpansionInterface");
-  system.GetAudioInterface().DoState(p);
+  AudioInterface::DoState(p);
   p.DoMarker("AudioInterface");
-  system.GetHSP().DoState(p);
-  p.DoMarker("HSP");
 
   if (SConfig::GetInstance().bWii)
   {
@@ -118,4 +108,4 @@ void DoState(Core::System& system, PointerWrap& p)
 
   p.DoMarker("WIIHW");
 }
-}  // namespace HW
+}

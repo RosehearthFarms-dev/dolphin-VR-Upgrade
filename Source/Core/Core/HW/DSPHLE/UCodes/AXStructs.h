@@ -1,51 +1,96 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include "Common/CommonTypes.h"
 
-namespace DSP::HLE
+namespace DSP
 {
-struct VolumeData
+namespace HLE
 {
-  u16 volume;
-  u16 volume_delta;
-};
-
 struct PBMixer
 {
-  VolumeData main_left, main_right;
-  VolumeData auxA_left, auxA_right;
-  VolumeData auxB_left, auxB_right;
-  // This somewhat strange-looking order of surround channels
-  // allows the ucode to use the 2-channel IROM function mix_two_add()
-  // when mixing (auxb_s and main_s) or (main_s and auxa_s).
-  VolumeData auxB_surround;
-  VolumeData main_surround;
-  VolumeData auxA_surround;
+  u16 left;
+  u16 left_delta;
+  u16 right;
+  u16 right_delta;
+
+  u16 auxA_left;
+  u16 auxA_left_delta;
+  u16 auxA_right;
+  u16 auxA_right_delta;
+
+  u16 auxB_left;
+  u16 auxB_left_delta;
+  u16 auxB_right;
+  u16 auxB_right_delta;
+
+  u16 auxB_surround;
+  u16 auxB_surround_delta;
+  u16 surround;
+  u16 surround_delta;
+  u16 auxA_surround;
+  u16 auxA_surround_delta;
 };
 
 struct PBMixerWii
 {
-  VolumeData main_left, main_right;
-  VolumeData auxA_left, auxA_right;
-  VolumeData auxB_left, auxB_right;
+  // volume mixing values in .15, 0x8000 = ca. 1.0
+  u16 left;
+  u16 left_delta;
+  u16 right;
+  u16 right_delta;
+
+  u16 auxA_left;
+  u16 auxA_left_delta;
+  u16 auxA_right;
+  u16 auxA_right_delta;
+
+  u16 auxB_left;
+  u16 auxB_left_delta;
+  u16 auxB_right;
+  u16 auxB_right_delta;
+
   // Note: the following elements usage changes a little in DPL2 mode
   // TODO: implement and comment it in the mixer
-  VolumeData auxC_left, auxC_right;
-  VolumeData main_surround;
-  VolumeData auxA_surround;
-  VolumeData auxB_surround;
-  VolumeData auxC_surround;
+  u16 auxC_left;
+  u16 auxC_left_delta;
+  u16 auxC_right;
+  u16 auxC_right_delta;
+
+  u16 surround;
+  u16 surround_delta;
+  u16 auxA_surround;
+  u16 auxA_surround_delta;
+  u16 auxB_surround;
+  u16 auxB_surround_delta;
+  u16 auxC_surround;
+  u16 auxC_surround_delta;
 };
 
 struct PBMixerWM
 {
-  VolumeData main0, aux0;
-  VolumeData main1, aux1;
-  VolumeData main2, aux2;
-  VolumeData main3, aux3;
+  u16 main0;
+  u16 main0_delta;
+  u16 aux0;
+  u16 aux0_delta;
+
+  u16 main1;
+  u16 main1_delta;
+  u16 aux1;
+  u16 aux1_delta;
+
+  u16 main2;
+  u16 main2_delta;
+  u16 aux2;
+  u16 aux2_delta;
+
+  u16 main3;
+  u16 main3_delta;
+  u16 aux3;
+  u16 aux3_delta;
 };
 
 struct PBInitialTimeDelay
@@ -75,32 +120,32 @@ struct PBUpdates
 // and ramped down on a per-sample basis to provide a gentle "roll off."
 struct PBDpop
 {
-  s16 main_left;
+  s16 left;
   s16 auxA_left;
   s16 auxB_left;
 
-  s16 main_right;
+  s16 right;
   s16 auxA_right;
   s16 auxB_right;
 
-  s16 main_surround;
+  s16 surround;
   s16 auxA_surround;
   s16 auxB_surround;
 };
 
 struct PBDpopWii
 {
-  s16 main_left;
+  s16 left;
   s16 auxA_left;
   s16 auxB_left;
   s16 auxC_left;
 
-  s16 main_right;
+  s16 right;
   s16 auxA_right;
   s16 auxB_right;
   s16 auxC_right;
 
-  s16 main_surround;
+  s16 surround;
   s16 auxA_surround;
   s16 auxB_surround;
   s16 auxC_surround;
@@ -121,7 +166,7 @@ struct PBDpopWM
 
 struct PBVolumeEnvelope
 {
-  s16 cur_volume;        // Volume at start of frame
+  u16 cur_volume;        // Volume at start of frame
   s16 cur_volume_delta;  // Signed per sample delta (96 samples per frame)
 };
 
@@ -194,8 +239,8 @@ struct AXPB
   u16 coef_select;
   u16 mixer_control;
 
-  u16 running;    // 1 = playing, anything else = stopped
-  u16 is_stream;  // 1 = stream, anything else = one shot
+  u16 running;    // 1=RUN 0=STOP
+  u16 is_stream;  // 1 = stream, 0 = one shot
 
   PBMixer mixer;
   PBInitialTimeDelay initial_time_delay;
@@ -268,7 +313,7 @@ struct AXPBWii
   PBSampleRateConverterWM remote_src;
   PBInfImpulseResponseWM remote_iir;
 
-  u16 pad[12];  // align us, captain! (32B)
+  u16 padding[12]; // align us, captain! (32B)
 };
 
 // TODO: All these enums have changed a lot for Wii
@@ -292,4 +337,5 @@ enum
   FILTER_LOWPASS = 1,
   FILTER_BIQUAD = 2,
 };
-}  // namespace DSP::HLE
+}  // namespace HLE
+}  // namespace DSP

@@ -1,11 +1,11 @@
 //
-// Copyright (C) 2014-2015 LunarG, Inc.
+//Copyright (C) 2014-2015 LunarG, Inc.
 //
-// All rights reserved.
+//All rights reserved.
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions
-// are met:
+//Redistribution and use in source and binary forms, with or without
+//modification, are permitted provided that the following conditions
+//are met:
 //
 //    Redistributions of source code must retain the above copyright
 //    notice, this list of conditions and the following disclaimer.
@@ -19,24 +19,22 @@
 //    contributors may be used to endorse or promote products derived
 //    from this software without specific prior written permission.
 //
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-// COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-// BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-// LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-// ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+//THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+//"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+//LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+//FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+//COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+//INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+//BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+//LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+//CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+//LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+//ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+//POSSIBILITY OF SUCH DAMAGE.
 
 //
 // Parameterize the SPIR-V enumerants.
 //
-
-#pragma once
 
 #include "spirv.hpp"
 
@@ -125,7 +123,6 @@ enum OperandClass {
     OperandVariableLiteralId,
     OperandLiteralNumber,
     OperandLiteralString,
-    OperandVariableLiteralStrings,
     OperandSource,
     OperandExecutionModel,
     OperandAddressing,
@@ -152,7 +149,7 @@ enum OperandClass {
     OperandMemorySemantics,
     OperandMemoryAccess,
     OperandScope,
-    OperandGroupOperation,
+	OperandGroupOperation,
     OperandKernelEnqueueFlags,
     OperandKernelProfilingInfo,
     OperandCapability,
@@ -191,6 +188,7 @@ protected:
 class EnumParameters {
 public:
     EnumParameters() : desc(0) { }
+    EnumCaps caps;
     const char* desc;
 };
 
@@ -235,6 +233,7 @@ public:
     bool hasType()   const { return typePresent != 0; }
 
     const char* opDesc;
+    EnumCaps capabilities;
     OpcodeClass opClass;
     OperandParameters operands;
 
@@ -242,6 +241,8 @@ protected:
     int typePresent   : 1;
     int resultPresent : 1;
 };
+
+const int OpcodeCeiling = 321;
 
 // The set of objects that hold all the instruction/operand
 // parameterization information.
@@ -256,4 +257,4 @@ const char* AccessQualifierString(int attr);
 
 void PrintOperands(const OperandParameters& operands, int reservedOperands);
 
-}  // end namespace spv
+};  // end namespace spv

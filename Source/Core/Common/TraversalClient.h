@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: CC0-1.0
+// This file is public domain, in case it's useful to anyone. -comex
 
 #pragma once
 
@@ -6,35 +6,30 @@
 #include <list>
 #include <memory>
 #include <string>
-#include <string_view>
 
 #include <enet/enet.h>
 
 #include "Common/CommonTypes.h"
-#include "Common/ENet.h"
 #include "Common/Thread.h"
 #include "Common/TraversalProto.h"
 
-namespace Common
-{
 class TraversalClientClient
 {
 public:
   virtual ~TraversalClientClient() = default;
   virtual void OnTraversalStateChanged() = 0;
   virtual void OnConnectReady(ENetAddress addr) = 0;
-  virtual void OnConnectFailed(TraversalConnectFailedReason reason) = 0;
-  virtual void OnTtlDetermined(u8 ttl) = 0;
+  virtual void OnConnectFailed(u8 reason) = 0;
 };
 
 class TraversalClient
 {
 public:
-  enum class State
+  enum State
   {
     Connecting,
     Connected,
-    Failure,
+    Failure
   };
   enum class FailureReason
   {
@@ -44,72 +39,46 @@ public:
     SocketSendError,
     ResendTimeout,
   };
-  TraversalClient(ENetHost* netHost, const std::string& server, const u16 port,
-                  const u16 port_alt = 0);
+  TraversalClient(ENetHost* netHost, const std::string& server, const u16 port);
   ~TraversalClient();
-
-  TraversalHostId GetHostID() const;
-  TraversalInetAddress GetExternalAddress() const;
-  State GetState() const;
-  FailureReason GetFailureReason() const;
-
-  bool HasFailed() const { return m_State == State::Failure; }
-  bool IsConnecting() const { return m_State == State::Connecting; }
-  bool IsConnected() const { return m_State == State::Connected; }
-
   void Reset();
-  void ConnectToClient(std::string_view host);
+  void ConnectToClient(const std::string& host);
   void ReconnectToServer();
   void Update();
+  // called from NetHost
+  bool TestPacket(u8* data, size_t size, ENetAddress* from);
   void HandleResends();
 
-  TraversalClientClient* m_Client = nullptr;
+  ENetHost* m_NetHost;
+  TraversalClientClient* m_Client;
+  TraversalHostId m_HostId;
+  State m_State;
+  FailureReason m_FailureReason;
 
 private:
   struct OutgoingTraversalPacketInfo
   {
     TraversalPacket packet;
     int tries;
-    u32 sendTime;
+    enet_uint32 sendTime;
   };
   void HandleServerPacket(TraversalPacket* packet);
-  // called from NetHost
-  bool TestPacket(u8* data, size_t size, ENetAddress* from);
   void ResendPacket(OutgoingTraversalPacketInfo* info);
   TraversalRequestId SendTraversalPacket(const TraversalPacket& packet);
   void OnFailure(FailureReason reason);
   void HandlePing();
   static int ENET_CALLBACK InterceptCallback(ENetHost* host, ENetEvent* event);
-
-  void NewTraversalTest();
-  void HandleTraversalTest();
-
-  ENetHost* m_NetHost;
-  TraversalHostId m_HostId{};
-  TraversalInetAddress m_external_address{};
-  State m_State{};
-  FailureReason m_FailureReason{};
-  TraversalRequestId m_ConnectRequestId = 0;
-  bool m_PendingConnect = false;
+  TraversalRequestId m_ConnectRequestId;
+  bool m_PendingConnect;
   std::list<OutgoingTraversalPacketInfo> m_OutgoingTraversalPackets;
-  ENetAddress m_ServerAddress{};
+  ENetAddress m_ServerAddress;
   std::string m_Server;
   u16 m_port;
-  u16 m_portAlt;
-  u32 m_PingTime = 0;
-
-  ENetSocket m_TestSocket = ENET_SOCKET_NULL;
-  TraversalRequestId m_TestRequestId = 0;
-  u8 m_ttl = 2;
-  bool m_ttlReady = false;
+  enet_uint32 m_PingTime;
 };
-
 extern std::unique_ptr<TraversalClient> g_TraversalClient;
 // the NetHost connected to the TraversalClient.
-extern ENet::ENetHostPtr g_MainNetHost;
-
+extern std::unique_ptr<ENetHost> g_MainNetHost;
 // Create g_TraversalClient and g_MainNetHost if necessary.
-bool EnsureTraversalClient(const std::string& server, u16 server_port, u16 server_port_alt = 0,
-                           u16 listen_port = 0);
+bool EnsureTraversalClient(const std::string& server, u16 server_port, u16 listen_port = 0);
 void ReleaseTraversalClient();
-}  // namespace Common

@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
@@ -27,19 +28,17 @@ class X64CodeBlock;
 
 class Jit64AsmRoutineManager : public CommonAsmRoutines
 {
+private:
+  void Generate();
+  void GenerateCommon();
+  u8* m_stack_top;
+
 public:
   // NOTE: When making large additions to the AsmCommon code, you might
   // want to ensure this number is big enough.
   static constexpr size_t CODE_SIZE = 16384;
 
-  explicit Jit64AsmRoutineManager(Jit64& jit);
-
-  void Init();
-  void Regenerate();
+  void Init(u8* stack_top);
 
   void ResetStack(Gen::X64CodeBlock& emitter);
-
-private:
-  void Generate();
-  void GenerateCommon();
 };

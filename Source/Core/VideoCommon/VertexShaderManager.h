@@ -1,90 +1,80 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
-#include <array>
 #include <string>
-#include <vector>
 
-#include "Common/BitSet.h"
 #include "Common/CommonTypes.h"
-#include "Common/Matrix.h"
 #include "VideoCommon/ConstantManager.h"
-#include "VideoCommon/NativeVertexFormat.h"
+#include "VideoCommon/VideoCommon.h"
+
+enum ViewportType
+{
+  VIEW_FULLSCREEN = 0,
+  VIEW_LETTERBOXED,
+  VIEW_HUD_ELEMENT,
+  VIEW_SKYBOX,
+  VIEW_PLAYER_1,
+  VIEW_PLAYER_2,
+  VIEW_PLAYER_3,
+  VIEW_PLAYER_4,
+  VIEW_OFFSCREEN,
+  VIEW_RENDER_TO_TEXTURE,
+};
+extern enum ViewportType g_viewport_type, g_old_viewport_type;
 
 class PointerWrap;
-struct PortableVertexDeclaration;
-class XFStateManager;
+struct ProjectionHackConfig;
+
+void UpdateProjectionHack(const ProjectionHackConfig& config);
 
 // The non-API dependent parts.
-class alignas(16) VertexShaderManager
+class VertexShaderManager
 {
 public:
-  void Init();
-  void DoState(PointerWrap& p);
+  static void Init();
+  static void Dirty();
+  static void DoState(PointerWrap& p);
 
   // constant management
-  void SetProjectionMatrix(XFStateManager& xf_state_manager);
-  void SetConstants(const std::vector<std::string>& textures, XFStateManager& xf_state_manager);
+  static void SetConstants();
+  static void SetProjectionConstants();
+  static void SetViewportConstants();
+  static void CheckOrientationConstants();
+  static void CheckSkybox();
+  static void LockSkybox();
+
+  static void InvalidateXFRange(int start, int end);
+  static void SetTexMatrixChangedA(u32 value);
+  static void SetTexMatrixChangedB(u32 value);
+  static void SetViewportChanged();
+  static void SetProjectionChanged();
+  static void SetMaterialColorChanged(int index);
+
+  static void TranslateView(float left_metres, float forward_metres, float down_metres = 0.0f);
+  static void RotateView(float x, float y);
+  static void ScaleView(float scale);
+  static void ResetView();
+
+  static void SetVertexFormat(u32 components);
+  static void SetTexMatrixInfoChanged(int index);
+  static void SetLightingConfigChanged();
 
   // data: 3 floats representing the X, Y and Z vertex model coordinates and the posmatrix index.
   // out:  4 floats which will be initialized with the corresponding clip space coordinates
-  // NOTE: m_projection_matrix must be up to date when this is called
+  // NOTE: g_fProjectionMatrix must be up to date when this is called
   //       (i.e. VertexShaderManager::SetConstants needs to be called before using this!)
-  void TransformToClipSpace(const float* data, float* out, u32 mtxIdx);
+  static void TransformToClipSpace(const float* data, float* out, u32 mtxIdx);
 
-  static bool UseVertexDepthRange();
-
-  VertexShaderConstants constants{};
-  bool dirty = false;
-
-  static DOLPHIN_FORCE_INLINE void UpdateValue(bool* dirty, u32* old_value, u32 new_value)
-  {
-    if (*old_value == new_value)
-      return;
-    *old_value = new_value;
-    *dirty = true;
-  }
-
-  static DOLPHIN_FORCE_INLINE void UpdateOffset(bool* dirty, bool include_components,
-                                                u32* old_value, const AttributeFormat& attribute)
-  {
-    if (!attribute.enable)
-      return;
-    u32 new_value = attribute.offset / 4;  // GPU uses uint offsets
-    if (include_components)
-      new_value |= attribute.components << 16;
-    UpdateValue(dirty, old_value, new_value);
-  }
-
-  template <size_t N>
-  static DOLPHIN_FORCE_INLINE void UpdateOffsets(bool* dirty, bool include_components,
-                                                 std::array<u32, N>* old_value,
-                                                 const std::array<AttributeFormat, N>& attribute)
-  {
-    for (size_t i = 0; i < N; i++)
-      UpdateOffset(dirty, include_components, &(*old_value)[i], attribute[i]);
-  }
-
-  DOLPHIN_FORCE_INLINE void SetVertexFormat(u32 components, const PortableVertexDeclaration& format)
-  {
-    UpdateValue(&dirty, &constants.components, components);
-    UpdateValue(&dirty, &constants.vertex_stride, format.stride / 4);
-    UpdateOffset(&dirty, true, &constants.vertex_offset_position, format.position);
-    UpdateOffset(&dirty, false, &constants.vertex_offset_posmtx, format.posmtx);
-    UpdateOffsets(&dirty, true, &constants.vertex_offset_texcoords, format.texcoords);
-    UpdateOffsets(&dirty, false, &constants.vertex_offset_colors, format.colors);
-    UpdateOffsets(&dirty, false, &constants.vertex_offset_normals, format.normals);
-  }
-
-private:
-  alignas(16) std::array<float, 16> m_projection_matrix;
-
-  // track changes
-  bool m_projection_graphics_mod_change = false;
-
-  Common::Matrix44 m_viewport_correction{};
-
-  Common::Matrix44 LoadProjectionMatrix();
+  static VertexShaderConstants constants;
+  static std::vector<VertexShaderConstants> constants_replay;
+  static float4 constants_eye_projection[2][4];
+  static bool m_layer_on_top;
+  static bool dirty;
 };
+
+void ScaleRequestedToRendered(EFBRectangle* requested, EFBRectangle* rendered);
+extern EFBRectangle g_final_screen_region, g_requested_viewport, g_rendered_viewport;
+extern bool debug_newScene;

@@ -1,5 +1,6 @@
 // Copyright 2010 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/HW/GCPad.h"
 
@@ -22,8 +23,6 @@ InputConfig* GetConfig()
 
 void Shutdown()
 {
-  s_config.UnregisterHotplugCallback();
-
   s_config.ClearControllers();
 }
 
@@ -35,20 +34,15 @@ void Initialize()
       s_config.CreateController<GCPad>(i);
   }
 
-  s_config.RegisterHotplugCallback();
+  g_controller_interface.RegisterHotplugCallback(LoadConfig);
 
   // Load the saved controller config
-  s_config.LoadConfig(InputConfig::InputClass::GC);
+  s_config.LoadConfig(true);
 }
 
 void LoadConfig()
 {
-  s_config.LoadConfig(InputConfig::InputClass::GC);
-}
-
-bool IsInitialized()
-{
-  return !s_config.ControllersNeedToBeCreated();
+  s_config.LoadConfig(true);
 }
 
 GCPadStatus GetStatus(int pad_num)
@@ -66,13 +60,8 @@ void Rumble(const int pad_num, const ControlState strength)
   static_cast<GCPad*>(s_config.GetController(pad_num))->SetOutput(strength);
 }
 
-void ResetRumble(const int pad_num)
-{
-  static_cast<GCPad*>(s_config.GetController(pad_num))->SetOutput(0.0);
-}
-
 bool GetMicButton(const int pad_num)
 {
   return static_cast<GCPad*>(s_config.GetController(pad_num))->GetMicButton();
 }
-}  // namespace Pad
+}

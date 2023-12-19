@@ -1,17 +1,41 @@
 // Copyright 2015 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
-#include "Core/MemoryWatcher.h"
-
-#include <cstring>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <unistd.h>
 
 #include "Common/FileUtil.h"
+#include "Core/CoreTiming.h"
+#include "Core/HW/Memmap.h"
 #include "Core/HW/SystemTimers.h"
-#include "Core/PowerPC/MMU.h"
+#include "Core/MemoryWatcher.h"
+
+static std::unique_ptr<MemoryWatcher> s_memory_watcher;
+static CoreTiming::EventType* s_event;
+static const int MW_RATE = 600;  // Steps per second
+
+static void MWCallback(u64 userdata, s64 cyclesLate)
+{
+  s_memory_watcher->Step();
+  CoreTiming::ScheduleEvent(SystemTimers::GetTicksPerSecond() / MW_RATE - cyclesLate, s_event);
+}
+
+void MemoryWatcher::Init()
+{
+  s_memory_watcher = std::make_unique<MemoryWatcher>();
+  s_event = CoreTiming::RegisterEvent("MemoryWatcher", MWCallback);
+  CoreTiming::ScheduleEvent(0, s_event);
+}
+
+void MemoryWatcher::Shutdown()
+{
+  CoreTiming::RemoveEvent(s_event);
+  s_memory_watcher.reset();
+}
 
 MemoryWatcher::MemoryWatcher()
 {
@@ -34,8 +58,7 @@ MemoryWatcher::~MemoryWatcher()
 
 bool MemoryWatcher::LoadAddresses(const std::string& path)
 {
-  std::ifstream locations;
-  File::OpenFStream(locations, path, std::ios_base::in);
+  std::ifstream locations(path);
   if (!locations)
     return false;
 
@@ -43,7 +66,7 @@ bool MemoryWatcher::LoadAddresses(const std::string& path)
   while (std::getline(locations, line))
     ParseLine(line);
 
-  return !m_values.empty();
+  return m_values.size() > 0;
 }
 
 void MemoryWatcher::ParseLine(const std::string& line)
@@ -51,7 +74,7 @@ void MemoryWatcher::ParseLine(const std::string& line)
   m_values[line] = 0;
   m_addresses[line] = std::vector<u32>();
 
-  std::istringstream offsets(line);
+  std::stringstream offsets(line);
   offsets >> std::hex;
   u32 offset;
   while (offsets >> offset)
@@ -60,6 +83,7 @@ void MemoryWatcher::ParseLine(const std::string& line)
 
 bool MemoryWatcher::OpenSocket(const std::string& path)
 {
+  memset(&m_addr, 0, sizeof(m_addr));
   m_addr.sun_family = AF_UNIX;
   strncpy(m_addr.sun_path, path.c_str(), sizeof(m_addr.sun_path) - 1);
 
@@ -67,46 +91,39 @@ bool MemoryWatcher::OpenSocket(const std::string& path)
   return m_fd >= 0;
 }
 
-u32 MemoryWatcher::ChasePointer(const Core::CPUThreadGuard& guard, const std::string& line)
+u32 MemoryWatcher::ChasePointer(const std::string& line)
 {
   u32 value = 0;
   for (u32 offset : m_addresses[line])
-  {
-    value = PowerPC::MMU::HostRead_U32(guard, value + offset);
-    if (!PowerPC::MMU::HostIsRAMAddress(guard, value))
-      break;
-  }
+    value = Memory::Read_U32(value + offset);
   return value;
 }
 
-std::string MemoryWatcher::ComposeMessages(const Core::CPUThreadGuard& guard)
+std::string MemoryWatcher::ComposeMessage(const std::string& line, u32 value)
 {
-  std::ostringstream message_stream;
-  message_stream << std::hex;
+  std::stringstream message_stream;
+  message_stream << line << '\n' << std::hex << value;
+  return message_stream.str();
+}
+
+void MemoryWatcher::Step()
+{
+  if (!m_running)
+    return;
 
   for (auto& entry : m_values)
   {
     std::string address = entry.first;
     u32& current_value = entry.second;
 
-    u32 new_value = ChasePointer(guard, address);
+    u32 new_value = ChasePointer(address);
     if (new_value != current_value)
     {
       // Update the value
       current_value = new_value;
-      message_stream << address << '\n' << new_value << '\n';
+      std::string message = ComposeMessage(address, new_value);
+      sendto(m_fd, message.c_str(), message.size() + 1, 0, reinterpret_cast<sockaddr*>(&m_addr),
+             sizeof(m_addr));
     }
   }
-
-  return message_stream.str();
-}
-
-void MemoryWatcher::Step(const Core::CPUThreadGuard& guard)
-{
-  if (!m_running)
-    return;
-
-  std::string message = ComposeMessages(guard);
-  sendto(m_fd, message.c_str(), message.size() + 1, 0, reinterpret_cast<sockaddr*>(&m_addr),
-         sizeof(m_addr));
 }

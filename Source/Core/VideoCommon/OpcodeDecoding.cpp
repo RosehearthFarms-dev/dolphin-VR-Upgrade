@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 // DL facts:
 //  Ikaruga uses (nearly) NO display lists!
@@ -8,270 +9,328 @@
 //  Super Mario Galaxy has nearly all geometry and more than half of the state in DLs (great!)
 
 // Note that it IS NOT GENERALLY POSSIBLE to precompile display lists! You can compile them as they
-// are while interpreting them, and hope that the vertex format doesn't change, though, if you do
-// it right when they are called. The reason is that the vertex format affects the sizes of the
-// vertices.
+// are
+// while interpreting them, and hope that the vertex format doesn't change, though, if you do it
+// right
+// when they are called. The reason is that the vertex format affects the sizes of the vertices.
 
 #include "VideoCommon/OpcodeDecoding.h"
-
-#include "Common/Assert.h"
+#include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
+#include "Common/MsgHandler.h"
+#include "Core/ARBruteForcer.h"
+#include "Core/ConfigManager.h"
+#include "Core/Core.h"
 #include "Core/FifoPlayer/FifoRecorder.h"
 #include "Core/HW/Memmap.h"
-#include "Core/System.h"
 #include "VideoCommon/BPMemory.h"
 #include "VideoCommon/CPMemory.h"
 #include "VideoCommon/CommandProcessor.h"
 #include "VideoCommon/DataReader.h"
 #include "VideoCommon/Fifo.h"
 #include "VideoCommon/Statistics.h"
-#include "VideoCommon/VertexLoaderBase.h"
+#include "VideoCommon/VR.h"
 #include "VideoCommon/VertexLoaderManager.h"
+#include "VideoCommon/VideoCommon.h"
+#include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/XFMemory.h"
-#include "VideoCommon/XFStateManager.h"
-#include "VideoCommon/XFStructs.h"
+
+bool g_bRecordFifoData = false;
 
 namespace OpcodeDecoder
 {
-bool g_record_fifo_data = false;
+static bool s_bFifoErrorSeen = false;
+
+static u32 InterpretDisplayList(u32 address, u32 size)
+{
+  u8* startAddress;
+
+  if (Fifo::UseDeterministicGPUThread())
+    startAddress = (u8*)Fifo::PopFifoAuxBuffer(size);
+  else
+    startAddress = Memory::GetPointer(address);
+
+  u32 cycles = 0;
+
+  // Avoid the crash if Memory::GetPointer failed ..
+  if (startAddress != nullptr)
+  {
+    // temporarily swap dl and non-dl (small "hack" for the stats)
+    Statistics::SwapDL();
+
+    Run(DataReader(startAddress, startAddress + size), &cycles, true, true);
+    INCSTAT(stats.thisFrame.numDListsCalled);
+
+    // un-swap
+    Statistics::SwapDL();
+  }
+
+  return cycles;
+}
+
+static void InterpretDisplayListPreprocess(u32 address, u32 size)
+{
+  u8* startAddress = Memory::GetPointer(address);
+
+  Fifo::PushFifoAuxBuffer(startAddress, size);
+
+  if (startAddress != nullptr)
+  {
+    Run<true>(DataReader(startAddress, startAddress + size), nullptr, true, true);
+  }
+}
+
+void Init()
+{
+  g_opcode_replay_enabled =
+      g_ActiveConfig.bOpcodeReplay &&
+      SConfig::GetInstance().m_GPUDeterminismMode != GPU_DETERMINISM_FAKE_COMPLETION && g_has_hmd;
+  g_opcode_replay_frame = false;
+  g_opcode_replay_log_frame = false;
+  s_bFifoErrorSeen = false;
+}
+
+void Shutdown()
+{
+  if (g_has_hmd)
+  {
+    g_opcode_replay_frame = false;
+    g_opcode_replay_log_frame = false;
+    timewarp_logentries.clear();
+    timewarp_logentries.resize(0);
+  }
+}
 
 template <bool is_preprocess>
-class RunCallback final : public Callback
+u8* Run(DataReader src, u32* cycles, bool in_display_list, bool recursive_call)
 {
-public:
-  OPCODE_CALLBACK(void OnXF(u16 address, u8 count, const u8* data))
+  u32 totalCycles = 0;
+  u8* opcodeStart;
+
+  // if (((u32)(src.buffer) >= 0x92700000) && ((u32)(src.buffer) <= 0x9281FFFF))
+  // if (((u32)(src.buffer) == 0x9281F7AD)) //Doesn't work?
+  // if (((u32)(src.end) == 0x92e4d640))
+  //{
+  //	PanicAlert(
+  //		"Loop: (0x%x, 0x%x, timewarped_frame = %s, in_display_list=%s, recursive_call = %s).\n",
+  //		src.buffer,
+  //		src.end,
+  //		g_opcode_replay_frame ? "yes" : "no",
+  //		in_display_list ? "yes" : "no",
+  //		recursive_call ? "yes" : "no"
+  //		);
+  //}
+
+  if (g_opcode_replay_log_frame && !g_opcode_replay_frame && !recursive_call &&
+      (skipped_opcode_replay_count >= (int)g_ActiveConfig.iExtraVideoLoopsDivider))
   {
-    m_cycles += 18 + 6 * count;
+    timewarp_logentries.push_back(TimewarpLogEntry{src, is_preprocess});
 
-    if constexpr (!is_preprocess)
+    if (in_display_list)
     {
-      LoadXFReg(address, count, data);
-
-      INCSTAT(g_stats.this_frame.num_xf_loads);
+      PanicAlert("A display list call was recorded in the opcode replay buffer!");
     }
+
+    // s_pCurBufferPointer_log.push_back(VertexManager::s_pCurBufferPointer);
+    // s_pEndBufferPointer_log.push_back(VertexManager::s_pEndBufferPointer);
+    // s_pBaseBufferPointer_log.push_back(VertexManager::s_pBaseBufferPointer);
+
+    // if (CPBase_log.size() < 1)
+    //{
+    // SCPFifoStruct &fifo = CommandProcessor::fifo;
+
+    // CPBase_log.push_back((u32)fifo.CPBase);
+    // CPEnd_log.push_back((u32)fifo.CPEnd);
+    // CPHiWatermark_log.push_back(fifo.CPHiWatermark);
+    // CPLoWatermark_log.push_back(fifo.CPLoWatermark);
+    // CPReadWriteDistance_log.push_back((u32)fifo.CPReadWriteDistance);
+    // CPWritePointer_log.push_back((u32)fifo.CPWritePointer);
+    // CPReadPointer_log.push_back((u32)fifo.CPReadPointer);
+    // CPBreakpoint_log.push_back((u32)fifo.CPBreakpoint);
+    //}
   }
-  OPCODE_CALLBACK(void OnCP(u8 command, u32 value))
+
+  while (true)
   {
-    m_cycles += 12;
-    const u8 sub_command = command & CP_COMMAND_MASK;
-    if constexpr (!is_preprocess)
-    {
-      if (sub_command == MATINDEX_A)
-      {
-        VertexLoaderManager::g_needs_cp_xf_consistency_check = true;
-        auto& system = Core::System::GetInstance();
-        system.GetXFStateManager().SetTexMatrixChangedA(value);
-      }
-      else if (sub_command == MATINDEX_B)
-      {
-        VertexLoaderManager::g_needs_cp_xf_consistency_check = true;
-        auto& system = Core::System::GetInstance();
-        system.GetXFStateManager().SetTexMatrixChangedB(value);
-      }
-      else if (sub_command == VCD_LO || sub_command == VCD_HI)
-      {
-        VertexLoaderManager::g_main_vat_dirty = BitSet8::AllTrue(CP_NUM_VAT_REG);
-        VertexLoaderManager::g_bases_dirty = true;
-        VertexLoaderManager::g_needs_cp_xf_consistency_check = true;
-      }
-      else if (sub_command == CP_VAT_REG_A || sub_command == CP_VAT_REG_B ||
-               sub_command == CP_VAT_REG_C)
-      {
-        VertexLoaderManager::g_main_vat_dirty[command & CP_VAT_MASK] = true;
-        VertexLoaderManager::g_needs_cp_xf_consistency_check = true;
-      }
-      else if (sub_command == ARRAY_BASE)
-      {
-        VertexLoaderManager::g_bases_dirty = true;
-      }
+    opcodeStart = src.GetPointer();
 
-      INCSTAT(g_stats.this_frame.num_cp_loads);
+    if (!src.size())
+      goto end;
+
+    u8 cmd_byte = src.Read<u8>();
+    int refarray;
+    switch (cmd_byte)
+    {
+    case GX_NOP:
+      totalCycles += 6;  // Hm, this means that we scan over nop streams pretty slowly...
+      break;
+
+    case GX_UNKNOWN_RESET:
+      totalCycles += 6;  // Datel software uses this command
+      DEBUG_LOG(VIDEO, "GX Reset?: %08x", cmd_byte);
+      break;
+
+    case GX_LOAD_CP_REG:
+    {
+      if (src.size() < 1 + 4)
+        goto end;
+      totalCycles += 12;
+      u8 sub_cmd = src.Read<u8>();
+      u32 value = src.Read<u32>();
+      LoadCPReg(sub_cmd, value, is_preprocess);
+      if (!is_preprocess)
+        INCSTAT(stats.thisFrame.numCPLoads);
     }
-    else if constexpr (is_preprocess)
+    break;
+
+    case GX_LOAD_XF_REG:
     {
-      if (sub_command == VCD_LO || sub_command == VCD_HI)
+      if (src.size() < 4)
+        goto end;
+      u32 Cmd2 = src.Read<u32>();
+      int transfer_size = ((Cmd2 >> 16) & 15) + 1;
+      if (src.size() < transfer_size * sizeof(u32))
+        goto end;
+      totalCycles += 18 + 6 * transfer_size;
+      if (!is_preprocess)
       {
-        VertexLoaderManager::g_preprocess_vat_dirty = BitSet8::AllTrue(CP_NUM_VAT_REG);
+        u32 xf_address = Cmd2 & 0xFFFF;
+        LoadXFReg(transfer_size, xf_address, src);
+
+        INCSTAT(stats.thisFrame.numXFLoads);
       }
-      else if (sub_command == CP_VAT_REG_A || sub_command == CP_VAT_REG_B ||
-               sub_command == CP_VAT_REG_C)
+      src.Skip<u32>(transfer_size);
+    }
+    break;
+
+    case GX_LOAD_INDX_A:  // used for position matrices
+      refarray = 0xC;
+      goto load_indx;
+    case GX_LOAD_INDX_B:  // used for normal matrices
+      refarray = 0xD;
+      goto load_indx;
+    case GX_LOAD_INDX_C:  // used for postmatrices
+      refarray = 0xE;
+      goto load_indx;
+    case GX_LOAD_INDX_D:  // used for lights
+      refarray = 0xF;
+      goto load_indx;
+    load_indx:
+      if (src.size() < 4)
+        goto end;
+      totalCycles += 6;
+      if (is_preprocess)
+        PreprocessIndexedXF(src.Read<u32>(), refarray);
+      else
+        LoadIndexedXF(src.Read<u32>(), refarray);
+      break;
+
+    case GX_CMD_CALL_DL:
+    {
+      if (src.size() < 8)
+        goto end;
+      u32 address = src.Read<u32>();
+      u32 count = src.Read<u32>();
+
+      if (in_display_list)
       {
-        VertexLoaderManager::g_preprocess_vat_dirty[command & CP_VAT_MASK] = true;
-      }
-    }
-    GetCPState().LoadCPReg(command, value);
-  }
-  OPCODE_CALLBACK(void OnBP(u8 command, u32 value))
-  {
-    m_cycles += 12;
-
-    if constexpr (is_preprocess)
-    {
-      LoadBPRegPreprocess(command, value, m_cycles);
-    }
-    else
-    {
-      LoadBPReg(command, value, m_cycles);
-      INCSTAT(g_stats.this_frame.num_bp_loads);
-    }
-  }
-  OPCODE_CALLBACK(void OnIndexedLoad(CPArray array, u32 index, u16 address, u8 size))
-  {
-    m_cycles += 6;
-
-    if constexpr (is_preprocess)
-      PreprocessIndexedXF(array, index, address, size);
-    else
-      LoadIndexedXF(array, index, address, size);
-  }
-  OPCODE_CALLBACK(void OnPrimitiveCommand(OpcodeDecoder::Primitive primitive, u8 vat,
-                                          u32 vertex_size, u16 num_vertices, const u8* vertex_data))
-  {
-    // load vertices
-    const u32 size = vertex_size * num_vertices;
-
-    const u32 bytes =
-        VertexLoaderManager::RunVertices<is_preprocess>(vat, primitive, num_vertices, vertex_data);
-
-    ASSERT(bytes == size);
-
-    // 4 GPU ticks per vertex, 3 CPU ticks per GPU tick
-    m_cycles += num_vertices * 4 * 3 + 6;
-  }
-  // This can't be inlined since it calls Run, which makes it recursive
-  // m_in_display_list prevents it from actually recursing infinitely, but there's no real benefit
-  // to inlining Run for the display list directly.
-  OPCODE_CALLBACK_NOINLINE(void OnDisplayList(u32 address, u32 size))
-  {
-    m_cycles += 6;
-
-    if (m_in_display_list)
-    {
-      WARN_LOG_FMT(VIDEO, "recursive display list detected");
-    }
-    else
-    {
-      m_in_display_list = true;
-
-      auto& system = Core::System::GetInstance();
-
-      if constexpr (is_preprocess)
-      {
-        auto& memory = system.GetMemory();
-        const u8* const start_address = memory.GetPointer(address);
-
-        system.GetFifo().PushFifoAuxBuffer(start_address, size);
-
-        if (start_address != nullptr)
-        {
-          Run(start_address, size, *this);
-        }
+        totalCycles += 6;
+        INFO_LOG(VIDEO, "recursive display list detected");
       }
       else
       {
-        const u8* start_address;
+        if (is_preprocess)
+          InterpretDisplayListPreprocess(address, count);
+        else
+          totalCycles += 6 + InterpretDisplayList(address, count);
+      }
+    }
+    break;
 
-        auto& fifo = system.GetFifo();
-        if (fifo.UseDeterministicGPUThread())
+    case GX_CMD_UNKNOWN_METRICS:  // zelda 4 swords calls it and checks the metrics registers after
+                                  // that
+      totalCycles += 6;
+      DEBUG_LOG(VIDEO, "GX 0x44: %08x", cmd_byte);
+      break;
+
+    case GX_CMD_INVL_VC:  // Invalidate Vertex Cache
+      totalCycles += 6;
+      DEBUG_LOG(VIDEO, "Invalidate (vertex cache?)");
+      break;
+
+    case GX_LOAD_BP_REG:
+      // In skipped_frame case: We have to let BP writes through because they set
+      // tokens and stuff.  TODO: Call a much simplified LoadBPReg instead.
+      {
+        if (src.size() < 4)
+          goto end;
+        totalCycles += 12;
+        u32 bp_cmd = src.Read<u32>();
+        if (is_preprocess)
         {
-          start_address = static_cast<u8*>(fifo.PopFifoAuxBuffer(size));
+          LoadBPRegPreprocess(bp_cmd);
         }
         else
         {
-          auto& memory = system.GetMemory();
-          start_address = memory.GetPointer(address);
-        }
-
-        // Avoid the crash if memory.GetPointer failed ..
-        if (start_address != nullptr)
-        {
-          // temporarily swap dl and non-dl (small "hack" for the stats)
-          g_stats.SwapDL();
-
-          Run(start_address, size, *this);
-          INCSTAT(g_stats.this_frame.num_dlists_called);
-
-          // un-swap
-          g_stats.SwapDL();
+          LoadBPReg(bp_cmd);
+          INCSTAT(stats.thisFrame.numBPLoads);
         }
       }
+      break;
 
-      m_in_display_list = false;
-    }
-  }
-  OPCODE_CALLBACK(void OnNop(u32 count))
-  {
-    m_cycles += 6 * count;  // Hm, this means that we scan over nop streams pretty slowly...
-  }
-  OPCODE_CALLBACK(void OnUnknown(u8 opcode, const u8* data))
-  {
-    if (static_cast<Opcode>(opcode) == Opcode::GX_CMD_UNKNOWN_METRICS)
-    {
-      // 'Zelda Four Swords' calls it and checks the metrics registers after that
-      m_cycles += 6;
-      DEBUG_LOG_FMT(VIDEO, "GX 0x44");
-    }
-    else if (static_cast<Opcode>(opcode) == Opcode::GX_CMD_INVL_VC)
-    {
-      // Invalidate Vertex Cache
-      m_cycles += 6;
-      DEBUG_LOG_FMT(VIDEO, "Invalidate (vertex cache?)");
-    }
-    else
-    {
-      auto& system = Core::System::GetInstance();
-      system.GetCommandProcessor().HandleUnknownOpcode(system, opcode, data, is_preprocess);
-      m_cycles += 1;
-    }
-  }
-
-  OPCODE_CALLBACK(void OnCommand(const u8* data, u32 size))
-  {
-    ASSERT(size >= 1);
-    if constexpr (!is_preprocess)
-    {
-      // Display lists get added directly into the FIFO stream since this same callback is used to
-      // process them.
-      if (g_record_fifo_data && static_cast<Opcode>(data[0]) != Opcode::GX_CMD_CALL_DL)
+    // draw primitives
+    default:
+      if ((cmd_byte & 0xC0) == 0x80)
       {
-        FifoRecorder::GetInstance().WriteGPCommand(data, size);
+        // load vertices
+        if (src.size() < 2)
+          goto end;
+        u16 num_vertices = src.Read<u16>();
+        int bytes = VertexLoaderManager::RunVertices(
+            cmd_byte & GX_VAT_MASK,  // Vertex loader index (0 - 7)
+            (cmd_byte & GX_PRIMITIVE_MASK) >> GX_PRIMITIVE_SHIFT, num_vertices, src,
+            Fifo::WillSkipCurrentFrame(), is_preprocess);
+
+        if (bytes < 0)
+          goto end;
+
+        src.Skip(bytes);
+
+        // 4 GPU ticks per vertex, 3 CPU ticks per GPU tick
+        totalCycles += num_vertices * 4 * 3 + 6;
       }
+      else
+      {
+        if (!s_bFifoErrorSeen && !g_ActiveConfig.bOpcodeWarningDisable)
+          CommandProcessor::HandleUnknownOpcode(cmd_byte, opcodeStart, is_preprocess, g_opcode_replay_frame,
+                                                in_display_list, recursive_call);
+        ERROR_LOG(VIDEO, "FIFO: Unknown Opcode(0x%02x @ %p, preprocessing = %s)", cmd_byte,
+                  opcodeStart, is_preprocess ? "yes" : "no");
+        s_bFifoErrorSeen = true;
+        totalCycles += 1;
+      }
+      break;
+    }
+
+    // Display lists get added directly into the FIFO stream
+    if (!is_preprocess && g_bRecordFifoData && cmd_byte != GX_CMD_CALL_DL)
+    {
+      u8* opcodeEnd;
+      opcodeEnd = src.GetPointer();
+      FifoRecorder::GetInstance().WriteGPCommand(opcodeStart, u32(opcodeEnd - opcodeStart));
     }
   }
 
-  OPCODE_CALLBACK(CPState& GetCPState())
+end:
+  if (cycles)
   {
-    if constexpr (is_preprocess)
-      return g_preprocess_cp_state;
-    else
-      return g_main_cp_state;
+    *cycles = totalCycles;
   }
-
-  OPCODE_CALLBACK(u32 GetVertexSize(u8 vat))
-  {
-    VertexLoaderBase* loader = VertexLoaderManager::RefreshLoader<is_preprocess>(vat);
-    return loader->m_vertex_size;
-  }
-
-  u32 m_cycles = 0;
-  bool m_in_display_list = false;
-};
-
-template <bool is_preprocess>
-u8* RunFifo(DataReader src, u32* cycles)
-{
-  using CallbackT = RunCallback<is_preprocess>;
-  auto callback = CallbackT{};
-  u32 size = Run(src.GetPointer(), static_cast<u32>(src.size()), callback);
-
-  if (cycles != nullptr)
-    *cycles = callback.m_cycles;
-
-  src.Skip(size);
-  return src.GetPointer();
+  return opcodeStart;
 }
 
-template u8* RunFifo<true>(DataReader src, u32* cycles);
-template u8* RunFifo<false>(DataReader src, u32* cycles);
-
+template u8* Run<true>(DataReader src, u32* cycles, bool in_display_list,
+                       bool recursive_call = false);
+template u8* Run<false>(DataReader src, u32* cycles, bool in_display_list,
+                        bool recursive_call = false);
 }  // namespace OpcodeDecoder

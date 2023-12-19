@@ -1,5 +1,6 @@
 // Copyright 2016 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/IOS/Network/NCD/WiiNetConfig.h"
 
@@ -7,40 +8,47 @@
 
 #include "Common/CommonPaths.h"
 #include "Common/CommonTypes.h"
+#include "Common/File.h"
+#include "Common/FileUtil.h"
 #include "Common/Logging/Log.h"
 #include "Core/HW/Memmap.h"
-#include "Core/IOS/FS/FileSystem.h"
-#include "Core/IOS/IOS.h"
-#include "Core/IOS/Uids.h"
 
-namespace IOS::HLE::Net
+namespace IOS
 {
-static const std::string CONFIG_PATH = "/shared2/sys/net/02/config.dat";
-
-WiiNetConfig::WiiNetConfig() = default;
-
-void WiiNetConfig::ReadConfig(FS::FileSystem* fs)
+namespace HLE
 {
+namespace Net
+{
+WiiNetConfig::WiiNetConfig()
+{
+  m_path = File::GetUserPath(D_SESSION_WIIROOT_IDX) + "/" WII_SYSCONF_DIR "/net/02/config.dat";
+  ReadConfig();
+}
+
+void WiiNetConfig::ReadConfig()
+{
+  if (!File::IOFile(m_path, "rb").ReadBytes(&m_data, sizeof(m_data)))
+    ResetConfig();
+}
+
+void WiiNetConfig::WriteConfig() const
+{
+  if (!File::Exists(m_path))
   {
-    const auto file = fs->OpenFile(PID_NCD, PID_NCD, CONFIG_PATH, FS::Mode::Read);
-    if (file && file->Read(&m_data, 1))
-      return;
+    if (!File::CreateFullPath(File::GetUserPath(D_SESSION_WIIROOT_IDX) + "/" WII_SYSCONF_DIR
+                                                                         "/net/02/"))
+    {
+      ERROR_LOG(IOS_NET, "Failed to create directory for network config file");
+    }
   }
-  ResetConfig(fs);
+
+  File::IOFile(m_path, "wb").WriteBytes(&m_data, sizeof(m_data));
 }
 
-void WiiNetConfig::WriteConfig(FS::FileSystem* fs) const
+void WiiNetConfig::ResetConfig()
 {
-  constexpr FS::Modes public_modes{FS::Mode::ReadWrite, FS::Mode::ReadWrite, FS::Mode::ReadWrite};
-  fs->CreateFullPath(PID_NCD, PID_NCD, CONFIG_PATH, 0, public_modes);
-  const auto file = fs->CreateAndOpenFile(PID_NCD, PID_NCD, CONFIG_PATH, public_modes);
-  if (!file || !file->Write(&m_data, 1))
-    ERROR_LOG_FMT(IOS_NET, "Failed to write config");
-}
-
-void WiiNetConfig::ResetConfig(FS::FileSystem* fs)
-{
-  fs->Delete(PID_NCD, PID_NCD, CONFIG_PATH);
+  if (File::Exists(m_path))
+    File::Delete(m_path);
 
   memset(&m_data, 0, sizeof(m_data));
   m_data.connType = ConfigData::IF_WIRED;
@@ -48,16 +56,18 @@ void WiiNetConfig::ResetConfig(FS::FileSystem* fs)
       ConnectionSettings::WIRED_IF | ConnectionSettings::DNS_DHCP | ConnectionSettings::IP_DHCP |
       ConnectionSettings::CONNECTION_TEST_OK | ConnectionSettings::CONNECTION_SELECTED;
 
-  WriteConfig(fs);
+  WriteConfig();
 }
 
-void WiiNetConfig::WriteToMem(Memory::MemoryManager& memory, const u32 address) const
+void WiiNetConfig::WriteToMem(const u32 address) const
 {
-  memory.CopyToEmu(address, &m_data, sizeof(m_data));
+  Memory::CopyToEmu(address, &m_data, sizeof(m_data));
 }
 
-void WiiNetConfig::ReadFromMem(const Memory::MemoryManager& memory, const u32 address)
+void WiiNetConfig::ReadFromMem(const u32 address)
 {
-  memory.CopyFromEmu(&m_data, address, sizeof(m_data));
+  Memory::CopyFromEmu(&m_data, address, sizeof(m_data));
 }
-}  // namespace IOS::HLE::Net
+}  // namespace Net
+}  // namespace HLE
+}  // namespace IOS

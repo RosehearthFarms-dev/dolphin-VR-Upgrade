@@ -1,7 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#include "InputCommon/ControllerInterface/DInput/XInputFilter.h"
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include <cwchar>
 #include <unordered_set>
@@ -10,7 +9,9 @@
 #include <Windows.h>
 #include <SetupAPI.h>
 
-namespace ciface::DInput
+namespace ciface
+{
+namespace DInput
 {
 // Code for enumerating hardware devices that use the XINPUT device driver.
 // The MSDN recommended code suffers from massive performance problems when using language packs,
@@ -75,4 +76,5 @@ std::unordered_set<DWORD> GetXInputGUIDS()
   SetupDiDestroyDeviceInfoList(setup_enum);
   return guids;
 }
-}  // namespace ciface::DInput
+}
+}

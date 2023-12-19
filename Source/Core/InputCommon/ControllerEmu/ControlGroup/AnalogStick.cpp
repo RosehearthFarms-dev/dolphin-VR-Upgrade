@@ -1,13 +1,14 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "InputCommon/ControllerEmu/ControlGroup/AnalogStick.h"
 
+#include <algorithm>
 #include <cmath>
-#include <optional>
+#include <memory>
 
 #include "Common/Common.h"
-#include "Common/MathUtil.h"
 
 #include "InputCommon/ControlReference/ControlReference.h"
 #include "InputCommon/ControllerEmu/Control/Control.h"
@@ -17,106 +18,55 @@
 
 namespace ControllerEmu
 {
-AnalogStick::AnalogStick(const char* const name_, std::unique_ptr<StickGate>&& stick_gate)
-    : AnalogStick(name_, name_, std::move(stick_gate))
+AnalogStick::AnalogStick(const char* const name_, ControlState default_radius)
+    : AnalogStick(name_, name_, default_radius)
 {
 }
 
 AnalogStick::AnalogStick(const char* const name_, const char* const ui_name_,
-                         std::unique_ptr<StickGate>&& stick_gate)
-    : ReshapableInput(name_, ui_name_, GroupType::Stick), m_stick_gate(std::move(stick_gate))
+                         ControlState default_radius)
+    : ControlGroup(name_, ui_name_, GroupType::Stick)
 {
   for (auto& named_direction : named_directions)
-    AddInput(Translatability::Translate, named_direction);
+    controls.emplace_back(std::make_unique<Input>(named_direction));
 
-  AddInput(Translatability::Translate, _trans("Modifier"));
+  controls.emplace_back(std::make_unique<Input>(_trans("Modifier")));
+  numeric_settings.emplace_back(
+      std::make_unique<NumericSetting>(_trans("Radius"), default_radius, 0, 100));
+  numeric_settings.emplace_back(std::make_unique<NumericSetting>(_trans("Dead Zone"), 0, 0, 50));
 }
 
-AnalogStick::ReshapeData AnalogStick::GetReshapableState(bool adjusted) const
+void AnalogStick::GetState(ControlState* const x, ControlState* const y)
 {
-  const ControlState y = controls[0]->GetState() - controls[1]->GetState();
-  const ControlState x = controls[3]->GetState() - controls[2]->GetState();
+  ControlState yy = controls[0]->control_ref->State() - controls[1]->control_ref->State();
+  ControlState xx = controls[3]->control_ref->State() - controls[2]->control_ref->State();
 
-  // Return raw values. (used in UI)
-  if (!adjusted)
-    return {x, y};
+  ControlState radius = numeric_settings[SETTING_RADIUS]->GetValue();
+  ControlState deadzone = numeric_settings[SETTING_DEADZONE]->GetValue();
+  ControlState m = controls[4]->control_ref->State();
 
-  return Reshape(x, y, GetModifierInput()->GetState());
+  ControlState ang = atan2(yy, xx);
+  ControlState ang_sin = sin(ang);
+  ControlState ang_cos = cos(ang);
+
+  ControlState dist = sqrt(xx * xx + yy * yy);
+
+  // dead zone code
+  dist = std::max(0.0, dist - deadzone);
+  dist /= (1 - deadzone);
+
+  // radius
+  dist *= radius;
+
+  // The modifier halves the distance by 50%, which is useful
+  // for keyboard controls.
+  if (m)
+    dist *= 0.5;
+
+  yy = std::max(-1.0, std::min(1.0, ang_sin * dist));
+  xx = std::max(-1.0, std::min(1.0, ang_cos * dist));
+
+  *y = yy;
+  *x = xx;
 }
-
-AnalogStick::StateData AnalogStick::GetState() const
-{
-  return GetReshapableState(true);
-}
-
-AnalogStick::StateData AnalogStick::GetState(const InputOverrideFunction& override_func) const
-{
-  bool override_occurred = false;
-  return GetState(override_func, &override_occurred);
-}
-
-AnalogStick::StateData AnalogStick::GetState(const InputOverrideFunction& override_func,
-                                             bool* override_occurred) const
-{
-  StateData state = GetState();
-  if (!override_func)
-    return state;
-
-  if (const std::optional<ControlState> x_override = override_func(name, X_INPUT_OVERRIDE, state.x))
-  {
-    state.x = *x_override;
-    *override_occurred = true;
-  }
-
-  if (const std::optional<ControlState> y_override = override_func(name, Y_INPUT_OVERRIDE, state.y))
-  {
-    state.y = *y_override;
-    *override_occurred = true;
-  }
-
-  return state;
-}
-
-ControlState AnalogStick::GetGateRadiusAtAngle(double ang) const
-{
-  return m_stick_gate->GetRadiusAtAngle(ang);
-}
-
-Control* AnalogStick::GetModifierInput() const
-{
-  return controls[4].get();
-}
-
-OctagonAnalogStick::OctagonAnalogStick(const char* name_, ControlState gate_radius)
-    : OctagonAnalogStick(name_, name_, gate_radius)
-{
-}
-
-OctagonAnalogStick::OctagonAnalogStick(const char* name_, const char* ui_name_,
-                                       ControlState gate_radius)
-    : AnalogStick(name_, ui_name_, std::make_unique<ControllerEmu::OctagonStickGate>(1.0))
-{
-  AddVirtualNotchSetting(&m_virtual_notch_setting, 45);
-
-  AddSetting(
-      &m_gate_size_setting,
-      {_trans("Gate Size"),
-       // i18n: The percent symbol.
-       _trans("%"),
-       // i18n: Refers to plastic shell of game controller (stick gate) that limits stick movements.
-       _trans("Adjusts target radius of simulated stick gate."), nullptr,
-       SettingVisibility::Advanced},
-      gate_radius * 100, 0.01, 100);
-}
-
-ControlState OctagonAnalogStick::GetVirtualNotchSize() const
-{
-  return m_virtual_notch_setting.GetValue() * MathUtil::TAU / 360;
-}
-
-ControlState OctagonAnalogStick::GetGateRadiusAtAngle(double ang) const
-{
-  return AnalogStick::GetGateRadiusAtAngle(ang) * m_gate_size_setting.GetValue() / 100;
-}
-
 }  // namespace ControllerEmu

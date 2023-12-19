@@ -1,5 +1,6 @@
 // Copyright 2014 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 /*
  * The OS X Force Feedback API is very similar to the DirectInput API,
@@ -19,7 +20,9 @@ typedef LONG* LPLONG;  // Missing type for ForceFeedback.h
 #include "Common/CommonTypes.h"    // for LONG
 #include "DirectInputConstants.h"  // Not stricty necessary
 
-namespace ciface::ForceFeedback
+namespace ciface
+{
+namespace ForceFeedback
 {
 // Prototypes
 class IUnknownImpl;
@@ -193,4 +196,5 @@ public:
     return FFDeviceSetForceFeedbackProperty(m_device, property, &value);
   }
 };
-}  // namespace ciface::ForceFeedback
+}
+}

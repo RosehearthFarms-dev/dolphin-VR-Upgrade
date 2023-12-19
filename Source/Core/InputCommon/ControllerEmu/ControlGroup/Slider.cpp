@@ -1,5 +1,6 @@
 // Copyright 2017 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "InputCommon/ControllerEmu/ControlGroup/Slider.h"
 
@@ -12,44 +13,31 @@
 #include "InputCommon/ControllerEmu/Control/Control.h"
 #include "InputCommon/ControllerEmu/Control/Input.h"
 #include "InputCommon/ControllerEmu/ControllerEmu.h"
+#include "InputCommon/ControllerEmu/Setting/NumericSetting.h"
 
 namespace ControllerEmu
 {
-Slider::Slider(const std::string& name_, const std::string& ui_name_)
-    : ControlGroup(name_, ui_name_, GroupType::Slider)
+Slider::Slider(const std::string& name, const std::string& ui_name)
+    : ControlGroup(name, ui_name, GroupType::Slider)
 {
-  AddInput(Translatability::Translate, _trans("Left"));
-  AddInput(Translatability::Translate, _trans("Right"));
+  controls.emplace_back(std::make_unique<Input>("Left"));
+  controls.emplace_back(std::make_unique<Input>("Right"));
 
-  AddDeadzoneSetting(&m_deadzone_setting, 50);
+  numeric_settings.emplace_back(std::make_unique<NumericSetting>(_trans("Dead Zone"), 0, 0, 50));
 }
 
-Slider::Slider(const std::string& name_) : Slider(name_, name_)
+Slider::Slider(const std::string& name) : Slider(name, name)
 {
 }
 
-Slider::StateData Slider::GetState() const
+void Slider::GetState(ControlState* const slider)
 {
-  const ControlState deadzone = m_deadzone_setting.GetValue() / 100;
-  const ControlState state = controls[1]->GetState() - controls[0]->GetState();
+  const ControlState deadzone = numeric_settings[0]->GetValue();
+  const ControlState state = controls[1]->control_ref->State() - controls[0]->control_ref->State();
 
-  return {std::clamp(ApplyDeadzone(state, deadzone), -1.0, 1.0)};
+  if (fabs(state) > deadzone)
+    *slider = (state - (deadzone * sign(state))) / (1 - deadzone);
+  else
+    *slider = 0;
 }
-
-Slider::StateData Slider::GetState(const InputOverrideFunction& override_func) const
-{
-  if (!override_func)
-    return GetState();
-
-  const ControlState deadzone = m_deadzone_setting.GetValue() / 100;
-  ControlState state = controls[1]->GetState() - controls[0]->GetState();
-
-  state = ApplyDeadzone(state, deadzone);
-
-  if (std::optional<ControlState> state_override = override_func(name, X_INPUT_OVERRIDE, state))
-    state = *state_override;
-
-  return {std::clamp(state, -1.0, 1.0)};
-}
-
 }  // namespace ControllerEmu

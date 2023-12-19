@@ -1,5 +1,6 @@
 // Copyright 2008 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #include "Core/HW/EXI/EXI_DeviceAD16.h"
 
@@ -9,9 +10,7 @@
 
 namespace ExpansionInterface
 {
-CEXIAD16::CEXIAD16(Core::System& system) : IEXIDevice(system)
-{
-}
+CEXIAD16::CEXIAD16() = default;
 
 void CEXIAD16::SetCS(int cs)
 {
@@ -40,7 +39,7 @@ void CEXIAD16::TransferByte(u8& byte)
       switch (m_position)
       {
       case 1:
-        DEBUG_ASSERT(byte == 0x00);
+        _dbg_assert_(EXPANSIONINTERFACE, byte == 0x00);
         break;  // just skip
       case 2:
         byte = m_ad16_register.U8[0];

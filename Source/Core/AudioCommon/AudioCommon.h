@@ -1,40 +1,34 @@
 // Copyright 2009 Dolphin Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// Licensed under GPLv2+
+// Refer to the license.txt file included.
 
 #pragma once
 
 #include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
 
-#include "AudioCommon/Enums.h"
 #include "AudioCommon/SoundStream.h"
 
 class Mixer;
 
-namespace Core
-{
-class System;
-}
+extern std::unique_ptr<SoundStream> g_sound_stream;
 
 namespace AudioCommon
 {
-void InitSoundStream(Core::System& system);
-void PostInitSoundStream(Core::System& system);
-void ShutdownSoundStream(Core::System& system);
+void InitSoundStream();
+void ShutdownSoundStream();
 std::string GetDefaultSoundBackend();
 std::vector<std::string> GetSoundBackends();
-DPL2Quality GetDefaultDPL2Quality();
-bool SupportsDPL2Decoder(std::string_view backend);
-bool SupportsLatencyControl(std::string_view backend);
-bool SupportsVolumeChanges(std::string_view backend);
-void UpdateSoundStream(Core::System& system);
-void SetSoundStreamRunning(Core::System& system, bool running);
-void SendAIBuffer(Core::System& system, const short* samples, unsigned int num_samples);
-void StartAudioDump(Core::System& system);
-void StopAudioDump(Core::System& system);
-void IncreaseVolume(Core::System& system, unsigned short offset);
-void DecreaseVolume(Core::System& system, unsigned short offset);
-void ToggleMuteVolume(Core::System& system);
-}  // namespace AudioCommon
+bool SupportsDPL2Decoder(const std::string& backend);
+bool SupportsLatencyControl(const std::string& backend);
+bool SupportsVolumeChanges(const std::string& backend);
+void UpdateSoundStream();
+void SetSoundStreamRunning(bool running);
+void SendAIBuffer(const short* samples, unsigned int num_samples);
+void StartAudioDump();
+void StopAudioDump();
+void IncreaseVolume(unsigned short offset);
+void DecreaseVolume(unsigned short offset);
+void ToggleMuteVolume();
+}
